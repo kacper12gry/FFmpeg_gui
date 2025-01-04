@@ -1,7 +1,7 @@
 import sys
 import os
 import queue
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QWidget, QMenuBar, QAction, QMessageBox, QListWidget
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QWidget, QMenuBar, QAction, QMessageBox, QListWidget, QAbstractItemView
 from PyQt5.QtCore import QProcess
 
 class MainWindow(QMainWindow):
@@ -17,6 +17,7 @@ class MainWindow(QMainWindow):
         self.output_window.setReadOnly(True)
 
         self.task_list = QListWidget(self)
+        self.task_list.setSelectionMode(QAbstractItemView.SingleSelection)
 
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.button)
@@ -72,7 +73,15 @@ class MainWindow(QMainWindow):
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyRead.connect(self.update_output)
         self.process.finished.connect(self.process_next_in_queue)
+        self.process.finished.connect(self.mark_task_as_done)
         self.process.start(" ".join(command))
+
+        # Zaznacz aktualnie wykonywane zadanie
+        self.task_list.setCurrentRow(0)
+
+    def mark_task_as_done(self):
+        # Usuń ukończone zadanie z listy
+        self.task_list.takeItem(0)
 
     def update_output(self):
         output = self.process.readAll().data().decode()
