@@ -19,9 +19,13 @@ class MainWindow(QMainWindow):
         self.task_list = QListWidget(self)
         self.task_list.setSelectionMode(QAbstractItemView.SingleSelection)
 
+        self.cancel_button = QPushButton("Anuluj wybrane zadanie", self)
+        self.cancel_button.clicked.connect(self.cancel_selected_task)
+
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.button)
         self.layout.addWidget(self.task_list)
+        self.layout.addWidget(self.cancel_button)
         self.layout.addWidget(self.output_window)
 
         self.container = QWidget()
@@ -52,6 +56,20 @@ class MainWindow(QMainWindow):
                 self.task_list.addItem(f"Wideo: {mkv_file}, Napisy: {subtitle_file}")
                 if not self.process or self.process.state() == QProcess.NotRunning:
                     self.process_next_in_queue()
+
+    def cancel_selected_task(self):
+        selected_row = self.task_list.currentRow()
+        if selected_row != -1:
+            if selected_row == 0 and self.process and self.process.state() == QProcess.Running:
+                self.process.kill()
+            self.task_list.takeItem(selected_row)
+            # Rebuild the queue without the canceled task
+            new_queue = queue.Queue()
+            for i in range(self.queue.qsize()):
+                task = self.queue.get()
+                if i != selected_row:
+                    new_queue.put(task)
+            self.queue = new_queue
 
     def process_next_in_queue(self):
         if not self.queue.empty():
