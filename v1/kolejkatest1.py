@@ -1,7 +1,7 @@
 import sys
 import os
 import queue
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QWidget, QMenuBar, QAction, QMessageBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QWidget, QMenuBar, QAction, QMessageBox, QListWidget
 from PyQt5.QtCore import QProcess
 
 class MainWindow(QMainWindow):
@@ -16,8 +16,11 @@ class MainWindow(QMainWindow):
         self.output_window = QTextEdit(self)
         self.output_window.setReadOnly(True)
 
+        self.task_list = QListWidget(self)
+
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.button)
+        self.layout.addWidget(self.task_list)
         self.layout.addWidget(self.output_window)
 
         self.container = QWidget()
@@ -45,6 +48,7 @@ class MainWindow(QMainWindow):
             subtitle_file, _ = QFileDialog.getOpenFileName(self, "Wybierz plik z napisami", "", "ASS Files (*.ass);;All Files (*)", options=options)
             if subtitle_file:
                 self.queue.put((mkv_file, subtitle_file))
+                self.task_list.addItem(f"Wideo: {mkv_file}, Napisy: {subtitle_file}")
                 if not self.process or self.process.state() == QProcess.NotRunning:
                     self.process_next_in_queue()
 
