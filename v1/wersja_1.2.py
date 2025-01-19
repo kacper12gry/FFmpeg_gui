@@ -49,7 +49,7 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         platform = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "Informacje", f"FFmpeg GUI by kacper12gry\nVersion 1.1\n\nProgram wypalający napisy na plik wideo\n\nDziała na: {platform}")
+        QMessageBox.about(self, "Informacje", f"FFmpeg GUI by kacper12gry\nVersion 1.2\n\nProgram wypalający napisy na plik wideo\n\nDziała na: {platform}")
 
     def open_file_dialog(self):
         options = QFileDialog.Options()
