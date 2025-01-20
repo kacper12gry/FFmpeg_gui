@@ -1,6 +1,7 @@
 import sys
 import queue
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView, QAction, QMessageBox, QDialog
+from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView, QAction, QMessageBox, QDialog
+from PyQt5.QtCore import QProcess
 from PyQt5.QtGui import QIcon
 from process_manager import ProcessManager
 from options_dialog import OptionsDialog
@@ -15,7 +16,9 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("icon.png"))
 
         self.button = QPushButton("Wybierz plik MKV", self)
-        self.button.clicked.connect(self.open_file_dialog)
+        self.refresh_button = QPushButton("Odśwież", self)
+        self.refresh_button.setMaximumWidth(80)
+        self.refresh_button.clicked.connect(self.refresh_program)
 
         self.output_window = QTextEdit(self)
         self.output_window.setReadOnly(True)
@@ -26,8 +29,12 @@ class MainWindow(QMainWindow):
         self.cancel_button = QPushButton("Anuluj wybrane zadanie (zaznaczenie aktualnie robionego wyczyści całą liste)", self)
         self.cancel_button.clicked.connect(self.cancel_selected_task)
 
+        self.button_layout = QHBoxLayout()
+        self.button_layout.addWidget(self.button)
+        self.button_layout.addWidget(self.refresh_button)
+
         self.layout = QVBoxLayout()
-        self.layout.addWidget(self.button)
+        self.layout.addLayout(self.button_layout)
         self.layout.addWidget(self.task_list)
         self.layout.addWidget(self.cancel_button)
         self.layout.addWidget(self.output_window)
@@ -97,6 +104,10 @@ class MainWindow(QMainWindow):
                 if i != selected_row:
                     new_queue.put(task)
             self.queue = new_queue
+
+    def refresh_program(self):
+        self.close()
+        QProcess.startDetached(sys.executable, sys.argv)
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
