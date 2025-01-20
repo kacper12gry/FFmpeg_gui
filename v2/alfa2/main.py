@@ -1,5 +1,6 @@
 import sys
 import queue
+import os
 from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QFileDialog, QTextEdit, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView, QAction, QMessageBox, QDialog
 from PyQt5.QtCore import QProcess
 from PyQt5.QtGui import QIcon
