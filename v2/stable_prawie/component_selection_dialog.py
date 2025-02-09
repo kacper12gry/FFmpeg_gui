@@ -29,7 +29,7 @@ class ComponentSelectionDialog(QDialog):
         self.ffmpeg_radio = QRadioButton("Użyj tylko FFmpeg")
         self.mkvmerge_radio = QRadioButton("Użyj tylko mkvmerge")
         self.mkvmerge_ffmpeg_radio = QRadioButton("Użyj mkvmerge i FFmpeg")
-        self.ffmpeg_radio.setChecked(True)
+        self.mkvmerge_ffmpeg_radio.setChecked(True)
 
         self.button_group = QButtonGroup()
         self.button_group.addButton(self.ffmpeg_radio, 1)
