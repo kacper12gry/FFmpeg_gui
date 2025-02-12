@@ -1,4 +1,5 @@
 from PyQt5.QtWidgets import QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog, QRadioButton, QButtonGroup, QSpinBox, QCheckBox, QDialogButtonBox
+from pathlib import Path
 
 class ComponentSelectionDialog(QDialog):
     def __init__(self, parent=None):
@@ -75,20 +76,29 @@ class ComponentSelectionDialog(QDialog):
 
     def select_mkv_file(self):
         options = QFileDialog.Options()
-        self.mkv_file, _ = QFileDialog.getOpenFileName(self, "Wybierz plik MKV", "", "MKV Files (*.mkv);;All Files (*)", options=options)
-        if self.mkv_file:
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Wybierz plik MKV", "", "MKV Files (*.mkv);;All Files (*)", options=options
+        )
+        if file_path:
+            self.mkv_file = Path(file_path)  # Użycie pathlib.Path
             self.mkv_label.setText(f"Plik MKV: {self.mkv_file}")
 
     def select_subtitle_file(self):
         options = QFileDialog.Options()
-        self.subtitle_file, _ = QFileDialog.getOpenFileName(self, "Wybierz plik z napisami", "", "ASS Files (*.ass);;All Files (*)", options=options)
-        if self.subtitle_file:
+        subtitle_file, _ = QFileDialog.getOpenFileName(
+            self, "Wybierz plik z napisami", "", "ASS Files (*.ass);;All Files (*)", options=options
+        )
+        if subtitle_file:
+            self.subtitle_file = Path(subtitle_file)  # Użycie pathlib.Path
             self.subtitle_label.setText(f"Plik z napisami: {self.subtitle_file}")
 
     def select_font_folder(self):
-        self.font_folder = QFileDialog.getExistingDirectory(self, "Wybierz folder z czcionkami")
-        if self.font_folder:
+        options = QFileDialog.Options()
+        folder_path = QFileDialog.getExistingDirectory(self, "Wybierz folder z czcionkami", options=options)
+        if folder_path:
+            self.font_folder = Path(folder_path)  # Użycie pathlib.Path
             self.font_label.setText(f"Folder z czcionkami: {self.font_folder}")
+
 
     @property
     def selected_script(self):
