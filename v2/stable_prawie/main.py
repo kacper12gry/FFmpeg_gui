@@ -6,6 +6,7 @@ from PyQt5.QtCore import QProcess
 from PyQt5.QtGui import QIcon
 from process_manager import ProcessManager
 from component_selection_dialog import ComponentSelectionDialog
+from pathlib import Path
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -67,16 +68,24 @@ class MainWindow(QMainWindow):
     def open_component_selection_dialog(self):
         dialog = ComponentSelectionDialog(self)
         if dialog.exec_() == QDialog.Accepted:
-            mkv_file = dialog.mkv_file
-            subtitle_file = dialog.subtitle_file
-            font_folder = dialog.font_folder
-            selected_script = dialog.selected_script
-            selected_ffmpeg_script = dialog.selected_ffmpeg_script
-            gpu_bitrate = dialog.gpu_bitrate
-            debug_mode = dialog.debug_mode
-            self.queue.put((mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode))
-            task_description = f"Wideo: {mkv_file}, Napisy: {subtitle_file}, Czcionki: {font_folder}, FFmpeg: {selected_ffmpeg_script} ({'mkvmerge' if selected_script == 2 else 'ffmpeg'})"
-            self.task_list.addItem(task_description)
+            # Jeśli zadania zostały zaimportowane z pliku
+            if dialog.batch_tasks:
+                for task in dialog.batch_tasks:
+                    mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode = task
+                    self.queue.put(task)
+                    task_description = f"Wideo: {mkv_file}, Napisy: {subtitle_file}, Czcionki: {font_folder}, FFmpeg: {selected_ffmpeg_script} ({'mkvmerge' if selected_script == 2 else 'ffmpeg'})"
+                    self.task_list.addItem(task_description)
+            else:
+                mkv_file = dialog.mkv_file
+                subtitle_file = dialog.subtitle_file
+                font_folder = dialog.font_folder
+                selected_script = dialog.selected_script
+                selected_ffmpeg_script = dialog.selected_ffmpeg_script
+                gpu_bitrate = dialog.gpu_bitrate
+                debug_mode = dialog.debug_mode
+                self.queue.put((mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode))
+                task_description = f"Wideo: {mkv_file}, Napisy: {subtitle_file}, Czcionki: {font_folder}, FFmpeg: {selected_ffmpeg_script} ({'mkvmerge' if selected_script == 2 else 'ffmpeg'})"
+                self.task_list.addItem(task_description)
             if not self.process_manager.is_running():
                 self.process_manager.process_next_in_queue()
 
@@ -90,6 +99,9 @@ class MainWindow(QMainWindow):
             return  # Nie wybrano żadnego zadania
 
         tasks = list(self.queue.queue)  # Pobieramy listę z kolejki
+
+        if not tasks or selected_row >= len(tasks):
+            return  # Zabezpieczenie przed pustą listą lub niepoprawnym indeksem
 
         # Sprawdzamy, czy wybrany wiersz to aktualnie przetwarzane zadanie
         if selected_row == 0 and self.process_manager.is_running():
@@ -105,15 +117,8 @@ class MainWindow(QMainWindow):
             self.queue.put(task)
 
         # Jeśli anulowano aktualnie wykonywane zadanie, uruchamiamy następne
-        if selected_row == 0:
+        if selected_row == 0 and not self.queue.empty():
             self.process_manager.process_next_in_queue()
-
-    def kill_process(self):
-        if self.process:
-            self.process.kill()
-            self.process.waitForFinished()
-            self.process.close()
-            self.process = None  # Upewniamy się, że proces jest usunięty
 
     def refresh_program(self):
         self.close()
