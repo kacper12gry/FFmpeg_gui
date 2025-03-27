@@ -3,6 +3,7 @@ from pathlib import Path
 from datetime import datetime
 from PyQt5.QtCore import QProcess
 
+
 class ProcessManager:
     def __init__(self, queue, output_window, task_list, debug_mode=False, selected_script=1, gpu_bitrate=8):
         self.queue = queue
@@ -49,6 +50,7 @@ class ProcessManager:
         self.process = QProcess()
         self.process.setProcessChannelMode(QProcess.MergedChannels)
         self.process.readyRead.connect(self.update_output)
+        self.process.finished.connect(self.mark_task_as_done)
         self.process.start(command)
         self.task_list.setCurrentRow(0)
         self.task_list.currentItem().setText(f"Wideo: {mkv_file}, Napisy: {subtitle_file}, Czcionki: {font_folder} (mkvmerge)")
