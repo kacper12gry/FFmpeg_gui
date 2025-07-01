@@ -1,10 +1,11 @@
 # main.py
 import sys
 import os
+# Dodajemy QGroupBox i QSplitter
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout,
                              QHBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView,
-                             QMessageBox, QDialog)
-from PyQt6.QtCore import QProcess
+                             QMessageBox, QDialog, QGroupBox, QSplitter)
+from PyQt6.QtCore import QProcess, Qt
 from PyQt6.QtGui import QIcon, QAction
 from process_manager import ProcessManager
 from component_selection_dialog import ComponentSelectionDialog
@@ -14,46 +15,69 @@ from task_manager import TaskManager
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Automatyzer kurde by kacper12gry")
-        self.setGeometry(100, 100, 600, 400)
+        self.setWindowTitle("Automatyzer by kacper12gry")
+        self.setGeometry(100, 100, 700, 500) # Zwiększmy domyślny rozmiar okna
 
         self.setWindowIcon(QIcon("icon.png"))
 
+        # Inicjalizacja widgetów (bez zmian)
         self.button = QPushButton("Otwórz okno wyboru komponentów", self)
         self.button.clicked.connect(self.open_component_selection_dialog)
-
         self.refresh_button = QPushButton("Odśwież", self)
         self.refresh_button.setMaximumWidth(100)
         self.refresh_button.clicked.connect(self.refresh_program)
-
         self.output_window = QTextEdit(self)
         self.output_window.setReadOnly(True)
-
         self.task_list = QListWidget(self)
         self.task_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-
         self.cancel_button = QPushButton("Anuluj wybrane zadanie", self)
         self.cancel_button.clicked.connect(self.cancel_selected_task)
 
+        # Układ górnych przycisków (bez zmian)
         self.button_layout = QHBoxLayout()
         self.button_layout.addWidget(self.button)
         self.button_layout.addWidget(self.refresh_button)
 
+        # KROK 1: Grupujemy powiązane widgety dla lepszej organizacji
+        # Grupa dla kolejki zadań
+        task_group = QGroupBox("Kolejka Zadań")
+        task_layout = QVBoxLayout()
+        task_layout.addWidget(self.task_list)
+        task_layout.addWidget(self.cancel_button)
+        task_group.setLayout(task_layout)
+
+        # Grupa dla logu przetwarzania
+        log_group = QGroupBox("Log Przetwarzania")
+        log_layout = QVBoxLayout()
+        log_layout.addWidget(self.output_window)
+        log_group.setLayout(log_layout)
+
+        # KROK 2: Tworzymy QSplitter i dodajemy do niego nasze grupy
+        # QSplitter pozwala na zmianę rozmiaru paneli przez użytkownika
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(task_group) # Panel górny
+        splitter.addWidget(log_group)  # Panel dolny
+
+        # KROK 3: Ustawiamy proporcje dla splittera
+        # Drugi widget (log) będzie zajmował 2x więcej miejsca niż pierwszy
+        splitter.setStretchFactor(1, 2)
+        splitter.setSizes([150, 350]) # Ustawiamy początkowe rozmiary
+
+        # Główny layout okna
         self.layout = QVBoxLayout()
         self.layout.addLayout(self.button_layout)
-        self.layout.addWidget(self.task_list)
-        self.layout.addWidget(self.cancel_button)
-        self.layout.addWidget(self.output_window)
+        self.layout.addWidget(splitter) # Dodajemy splitter zamiast pojedynczych widgetów
 
+        # Kontener i ustawienie centralnego widgetu (bez zmian)
         self.container = QWidget()
         self.container.setLayout(self.layout)
         self.setCentralWidget(self.container)
 
         self.create_menu_bar()
-
         self.task_manager = TaskManager(self.task_list)
         self.process_manager = ProcessManager(self.task_manager, self.output_window, debug_mode=False)
 
+    # Reszta metod (create_menu_bar, show_about_dialog, etc.) pozostaje bez zmian
     def create_menu_bar(self):
         menu_bar = self.menuBar()
         about_action = QAction("About", self)
@@ -62,7 +86,7 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         platform = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "Informacje", f"Automatyzer by kacper12gry\nVersion 3.0\n\nProgram automatyzer remuxowania i wypalania napisów\n\nDziała na: {platform}")
+        QMessageBox.about(self, "Informacje", f"Automatyzer by kacper12gry\nVersion 3.1\n\nProgram automatyzer remuxowania i wypalania napisów\n\nDziała na: {platform}")
 
     def open_component_selection_dialog(self):
         dialog = ComponentSelectionDialog(self)
