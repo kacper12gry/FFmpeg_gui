@@ -1,20 +1,22 @@
+# main.py
 import sys
-import queue
 import os
-from PyQt5.QtWidgets import QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView, QAction, QMessageBox, QDialogButtonBox, QDialog
-from PyQt5.QtCore import QProcess
-from PyQt5.QtGui import QIcon
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout,
+                             QHBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView,
+                             QMessageBox, QDialog)
+from PyQt6.QtCore import QProcess
+from PyQt6.QtGui import QIcon, QAction
 from process_manager import ProcessManager
 from component_selection_dialog import ComponentSelectionDialog
 from pathlib import Path
+from task_manager import TaskManager
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("FFmpeg gui kurde by kacper12gry")
+        self.setWindowTitle("Automatyzer kurde by kacper12gry")
         self.setGeometry(100, 100, 600, 400)
 
-        # Ustaw ikonę okna
         self.setWindowIcon(QIcon("icon.png"))
 
         self.button = QPushButton("Otwórz okno wyboru komponentów", self)
@@ -28,7 +30,7 @@ class MainWindow(QMainWindow):
         self.output_window.setReadOnly(True)
 
         self.task_list = QListWidget(self)
-        self.task_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.task_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
 
         self.cancel_button = QPushButton("Anuluj wybrane zadanie", self)
         self.cancel_button.clicked.connect(self.cancel_selected_task)
@@ -49,11 +51,8 @@ class MainWindow(QMainWindow):
 
         self.create_menu_bar()
 
-        self.queue = queue.Queue()
-        self.selected_script = 1  # Default to the first script
-        self.gpu_bitrate = 8  # Default bitrate for GPU script in Mbps
-        self.debug_mode = False
-        self.process_manager = ProcessManager(self.queue, self.output_window, self.task_list, debug_mode=self.debug_mode, selected_script=self.selected_script, gpu_bitrate=self.gpu_bitrate)
+        self.task_manager = TaskManager(self.task_list)
+        self.process_manager = ProcessManager(self.task_manager, self.output_window, debug_mode=False)
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -63,73 +62,44 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         platform = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "Informacje", f"FFmpeg GUI by kacper12gry\nVersion 2.2\n\nProgram automatyzer remuxowania i wypalania napisów\n\nDziała na: {platform}")
+        QMessageBox.about(self, "Informacje", f"Automatyzer by kacper12gry\nVersion 3.0\n\nProgram automatyzer remuxowania i wypalania napisów\n\nDziała na: {platform}")
 
     def open_component_selection_dialog(self):
         dialog = ComponentSelectionDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            # Jeśli zadania zostały zaimportowane z pliku
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             if dialog.batch_tasks:
                 for task in dialog.batch_tasks:
-                    mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode = task
-                    self.queue.put(task)
-                    task_description = f"Wideo: {mkv_file}, Napisy: {subtitle_file}, Czcionki: {font_folder}, FFmpeg: {selected_ffmpeg_script} ({'mkvmerge' if selected_script == 2 else 'ffmpeg'})"
-                    self.task_list.addItem(task_description)
+                    mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode, intro_file = task
+                    self.task_manager.add_task(mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode, intro_file)
             else:
-                mkv_file = dialog.mkv_file
-                subtitle_file = dialog.subtitle_file
-                font_folder = dialog.font_folder
-                selected_script = dialog.selected_script
-                selected_ffmpeg_script = dialog.selected_ffmpeg_script
-                gpu_bitrate = dialog.gpu_bitrate
-                debug_mode = dialog.debug_mode
-                self.queue.put((mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode))
-                task_description = f"Wideo: {mkv_file}, Napisy: {subtitle_file}, Czcionki: {font_folder}, FFmpeg: {selected_ffmpeg_script} ({'mkvmerge' if selected_script == 2 else 'ffmpeg'})"
-                self.task_list.addItem(task_description)
-            if not self.process_manager.is_running():
-                self.process_manager.process_next_in_queue()
+                self.task_manager.add_task(dialog.mkv_file, dialog.subtitle_file, dialog.font_folder, dialog.selected_script, dialog.selected_ffmpeg_script, dialog.gpu_bitrate, dialog.debug_mode, getattr(dialog, 'intro_file', None))
 
-        # Upewnij się, że okno jest aktywowane po otwarciu dialogu
-        self.raise_()  # Podnosi okno na wierzch
-        self.activateWindow()  # Aktywuje okno
+            if not self.process_manager.is_running():
+                self.process_manager.process_next_task()
+
+        self.raise_()
+        self.activateWindow()
 
     def cancel_selected_task(self):
         selected_row = self.task_list.currentRow()
-        if selected_row == -1:
-            return  # Nie wybrano żadnego zadania
+        if selected_row == -1: return
 
-        tasks = list(self.queue.queue)  # Pobieramy listę z kolejki
-
-        if not tasks or selected_row >= len(tasks):
-            return  # Zabezpieczenie przed pustą listą lub niepoprawnym indeksem
-
-        # Sprawdzamy, czy wybrany wiersz to aktualnie przetwarzane zadanie
         if selected_row == 0 and self.process_manager.is_running():
-            self.process_manager.kill_process()  # Zatrzymujemy proces
+            self.process_manager.kill_process()
 
-        # Usuwamy zadanie z listy i kolejki
-        self.task_list.takeItem(selected_row)
-        tasks.pop(selected_row)
+        self.task_manager.remove_task(selected_row)
 
-        # Odtwarzamy kolejkę bez usuniętego zadania
-        self.queue = queue.Queue()
-        for task in tasks:
-            self.queue.put(task)
-
-        # Jeśli anulowano aktualnie wykonywane zadanie, uruchamiamy następne
-        if selected_row == 0 and not self.queue.empty():
-            self.process_manager.process_next_in_queue()
+        if selected_row == 0 and self.task_manager.has_tasks() and not self.process_manager.is_running():
+            self.process_manager.process_next_task()
 
     def refresh_program(self):
         self.close()
         QProcess.startDetached(sys.executable, sys.argv)
-
-        # Upewnij się, że okno zostanie ponownie aktywowane po odświeżeniu
-        self.raise_()  # Podnosi okno na wierzch
-        self.activateWindow()  # Aktywuje okno
+        self.raise_()
+        self.activateWindow()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()
-    sys.exit(app.exec_())
+    sys.exit(app.exec())
