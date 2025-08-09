@@ -1,12 +1,17 @@
 # main.py
 import sys
 import os
+import platform
+
+# POPRAWKA: Importujemy ctypes, aby móc komunikować się z API Windowsa
+if platform.system() == "Windows":
+    import ctypes
 # Dodajemy QGroupBox i QSplitter
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout,
                              QHBoxLayout, QWidget, QLabel, QListWidget, QAbstractItemView,
                              QMessageBox, QDialog, QGroupBox, QSplitter)
 from PyQt6.QtCore import QProcess, Qt
-from PyQt6.QtGui import QIcon, QAction
+from PyQt6.QtGui import QIcon, QAction, QGuiApplication
 from process_manager import ProcessManager
 from component_selection_dialog import ComponentSelectionDialog
 from pathlib import Path
@@ -18,7 +23,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Automatyzer by kacper12gry")
         self.setGeometry(100, 100, 700, 500) # Zwiększmy domyślny rozmiar okna
 
-        self.setWindowIcon(QIcon("icon.png"))
+        self.setWindowIcon(QIcon("icon/icon.svg"))
 
         # Inicjalizacja widgetów (bez zmian)
         self.button = QPushButton("Otwórz okno wyboru komponentów", self)
@@ -86,7 +91,7 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         platform = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "Informacje", f"Automatyzer by kacper12gry\nVersion 3.1\n\nProgram automatyzer remuxowania i wypalania napisów\n\nDziała na: {platform}")
+        QMessageBox.about(self, "Informacje", f"Automatyzer by kacper12gry\nVersion 3.2\n\nProgram automatyzer remuxowania i wypalania napisów\n\nDziała na: {platform}")
 
     def open_component_selection_dialog(self):
         dialog = ComponentSelectionDialog(self)
@@ -123,6 +128,11 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
 if __name__ == "__main__":
+
+    QGuiApplication.setDesktopFileName('pl.com.github.kacper12gry.automatyzer')
+    if platform.system() == "Windows":
+        myappid = 'com.github.kacper12gry.automatyzer' # Dowolny, unikalny string
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     app = QApplication(sys.argv)
     window = MainWindow()
     window.show()

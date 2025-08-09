@@ -1,6 +1,8 @@
 # task_manager.py
 from pathlib import Path
 from PyQt6.QtWidgets import QListWidgetItem
+from PyQt6.QtGui import QBrush, QColor
+from PyQt6.QtCore import Qt
 
 class Task:
     def __init__(self, mkv_file, subtitle_file, font_folder,
@@ -16,14 +18,22 @@ class Task:
         self.intro_file = Path(intro_file) if intro_file else None
 
     def get_description(self):
+        """Generuje bezpieczny i czytelny opis zadania."""
         if self.selected_script == 1:
             ffmpeg_type = "CPU" if self.selected_ffmpeg_script == 1 else f"GPU (Nvidia) - Bitrate: {self.gpu_bitrate}M"
             return f"FFmpeg: Wideo: {self.mkv_file.name}, Kodowanie: {ffmpeg_type}"
+
         elif self.selected_script in [2, 3]:
             script_type = "mkvmerge + FFmpeg" if self.selected_script == 2 else "Tylko mkvmerge"
-            return f"{script_type}: Wideo: {self.mkv_file.name}, Napisy: {self.subtitle_file.name}"
+            # POPRAWKA: Sprawdzamy, czy plik z napisami istnieje, zanim użyjemy jego nazwy
+            subtitle_name = self.subtitle_file.name if self.subtitle_file else "Brak napisów"
+            return f"{script_type}: Wideo: {self.mkv_file.name}, Napisy: {subtitle_name}"
+
         elif self.selected_script == 4:
-            return f"FFmpeg+Wstawka: Wideo: {self.mkv_file.name}, Intro: {self.intro_file.name}"
+            # POPRAWKA: Sprawdzamy, czy plik wstawki istnieje, zanim użyjemy jego nazwy
+            intro_name = self.intro_file.name if self.intro_file else "Brak wstawki"
+            return f"FFmpeg+Wstawka: Wideo: {self.mkv_file.name}, Intro: {intro_name}"
+
         else:
             return "Nieznane zadanie"
 
@@ -31,6 +41,7 @@ class TaskManager:
     def __init__(self, task_list_widget):
         self.task_list_widget = task_list_widget
         self.tasks = []
+        self.BaseTextRole = Qt.ItemDataRole.UserRole + 1
 
     def add_task(self, mkv_file, subtitle_file, font_folder,
                 selected_script, selected_ffmpeg_script,
@@ -41,7 +52,10 @@ class TaskManager:
             gpu_bitrate, debug_mode, intro_file
         )
         self.tasks.append(task)
-        item = QListWidgetItem(task.get_description())
+        description = task.get_description()
+        item = QListWidgetItem(description)
+        # Przechowujemy oryginalny opis, aby móc go później aktualizować
+        item.setData(self.BaseTextRole, description)
         self.task_list_widget.addItem(item)
         return task
 
@@ -62,8 +76,22 @@ class TaskManager:
         if self.has_tasks():
             item = self.task_list_widget.item(0)
             if item:
+                base_text = item.data(self.BaseTextRole)
                 if status_text:
-                    item.setText(f"{self.tasks[0].get_description()} - {status_text}")
+                    item.setText(f"{base_text} - [{status_text}]")
+                else:
+                    item.setText(base_text)
+
+                item.setBackground(QBrush(QColor("#e0e0ff")))
+                self.task_list_widget.setCurrentRow(0)
+
+    def mark_current_as_error(self, status_text="Błąd krytyczny"):
+        if self.has_tasks():
+            item = self.task_list_widget.item(0)
+            if item:
+                base_text = item.data(self.BaseTextRole)
+                item.setText(f"{base_text} - [{status_text}]")
+                item.setBackground(QBrush(QColor("#ffe0e0")))
                 self.task_list_widget.setCurrentRow(0)
 
     def complete_current_task(self):
