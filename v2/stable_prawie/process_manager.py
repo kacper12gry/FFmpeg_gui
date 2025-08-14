@@ -1,12 +1,17 @@
 # process_manager.py
 import os
+import re
 from pathlib import Path
 from datetime import datetime
-from PyQt6.QtCore import QProcess
+from PyQt6.QtCore import QObject, QProcess, pyqtSignal
 import platform
+import subprocess
 
-class ProcessManager:
+class ProcessManager(QObject):
+    eta_updated = pyqtSignal(int)
+
     def __init__(self, task_manager, output_window, debug_mode=False):
+        super().__init__()
         self.task_manager = task_manager
         self.output_window = output_window
         self.process = None
@@ -15,19 +20,64 @@ class ProcessManager:
         self.current_task = None
         self.is_windows = platform.system() == "Windows"
         self.chained_command_info = None
+        self.total_duration_seconds = 0
+        self.start_time = None
 
-    def is_running(self):
-        return self.process is not None and self.process.state() == QProcess.ProcessState.Running
+    def _start_process(self, program, arguments):
+        if self.process is None:
+            self.output_window.clear()
 
-    def _get_safe_path_for_ffmpeg(self, file_path):
-        if not self.is_windows: return str(file_path)
-        path_str = str(file_path).replace('\\', '\\\\').replace(':', '\\:')
-        return path_str
+        self.process = QProcess()
+        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        self.process.readyRead.connect(self.update_output)
+        self.process.finished.connect(self._on_process_finished)
+        self.process.start(program, arguments)
+
+        self.task_manager.update_list_widget()
+        return self.process
+
+    def _run_ffprobe_command(self, command):
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=10)
+            return result.stdout.strip()
+        except Exception as e:
+            self.log_debug(f"Błąd ffprobe: {e}")
+            return None
+
+    def _get_video_duration(self, video_path):
+        command = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
+        duration_str = self._run_ffprobe_command(command)
+        return float(duration_str) if duration_str else 0
+
+    def _get_video_framerate(self, video_path):
+        command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
+        return self._run_ffprobe_command(command)
+
+    def _parse_ffmpeg_time(self, output):
+        if not self.total_duration_seconds or not self.start_time:
+            return
+
+        match = re.search(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})", output)
+        if match:
+            h, m, s, _ = map(int, match.groups())
+            processed_seconds = h * 3600 + m * 60 + s
+            if processed_seconds > 0:
+                elapsed_time = (datetime.now() - self.start_time).total_seconds()
+                processing_speed = processed_seconds / elapsed_time
+                if processing_speed > 0:
+                    eta_seconds = int((self.total_duration_seconds - processed_seconds) / processing_speed)
+                    self.eta_updated.emit(eta_seconds)
 
     def process_next_task(self):
-        if not self.task_manager.has_tasks() or self.is_running(): return
+        if not self.task_manager.has_tasks() or self.is_running():
+            return
+
         self.current_task = self.task_manager.get_task(0)
-        if not self.current_task: return
+        if not self.current_task:
+            return
+
+        self.total_duration_seconds = self._get_video_duration(self.current_task.mkv_file)
+        self.start_time = datetime.now()
         self.task_manager.mark_current_as_processing("Przygotowywanie...")
 
         script_map = {
@@ -37,114 +87,106 @@ class ProcessManager:
             4: lambda task: self.run_ffmpeg_with_intro(task.mkv_file, task.intro_file)
         }
         action = script_map.get(self.current_task.selected_script)
-        if action: action(self.current_task)
-
-    def _start_process(self, program, arguments):
-        self.output_window.clear()
-        self.process = QProcess()
-        self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        self.process.readyRead.connect(self.update_output)
-        self.process.finished.connect(self._on_process_finished)
-        self.process.start(program, arguments)
-        return self.process
+        if action:
+            action(self.current_task)
 
     def _on_process_finished(self, exit_code, exit_status):
-        if not self.current_task: return
-
         is_success = exit_code == 0 and exit_status == QProcess.ExitStatus.NormalExit
 
-        if not is_success:
-            self.task_manager.mark_current_as_error("Błąd procesu")
-            # POPRAWKA: Po błędzie od razu resetujemy stan, co usunie zadanie z kolejki
-            self.task_completed(success=False)
-            return
-
-        if self.chained_command_info:
-            next_function = self.chained_command_info['function']
-            next_args = self.chained_command_info['args']
+        if self.chained_command_info and is_success:
+            next_function, next_args = self.chained_command_info['function'], self.chained_command_info['args']
             self.chained_command_info = None
             next_function(*next_args)
+        elif self.current_task:
+            if not is_success:
+                self.task_manager.mark_current_as_error("Błąd procesu")
+            self.task_completed(success=is_success)
         else:
-            self.task_completed(success=True)
-
-    # ... (metody run_... pozostają bez zmian) ...
-    def run_mkvmerge(self, mkv_file, subtitle_file, font_folder):
-        mkv_path, subtitle_path, font_path = Path(mkv_file).resolve(), Path(subtitle_file).resolve(), Path(font_folder).resolve()
-        final_output_file = mkv_path.with_name(mkv_path.stem + "_remux.mkv")
-        arguments = ["-o", str(final_output_file), "--audio-tracks", "1", "--no-subtitles", "--no-buttons", "--no-track-tags", "--no-chapters", "--no-attachments", str(mkv_path), "--language", "0:pol", "--track-name", "0:FrixySubs", str(subtitle_path), "--attachment-mime-type", "application/x-truetype-font"]
-        for font in font_path.iterdir():
-            if font.suffix.lower() in {'.ttf', '.otf', '.woff', '.woff2'}: arguments.extend(["--attach-file", str(font.resolve())])
-
-        self.task_manager.mark_current_as_processing("Uruchomiono mkvmerge")
-        if self.current_task.debug_mode: self.log_debug(f"mkvmerge {' '.join(arguments)}")
-        self._start_process("mkvmerge", arguments)
-
-    def run_mkvmerge_ffmpeg(self, mkv_file, subtitle_file, font_folder):
-        mkv_path, subtitle_path, font_path = Path(mkv_file).resolve(), Path(subtitle_file).resolve(), Path(font_folder).resolve()
-        final_output_file = mkv_path.with_name(mkv_path.stem + "_remux.mkv")
-        arguments = ["-o", str(final_output_file), "--no-subtitles", "--no-buttons", "--no-track-tags", "--no-chapters", "--no-attachments", str(mkv_path), "--language", "0:pol", "--track-name", "0:FrixySubs", str(subtitle_path), "--attachment-mime-type", "application/x-truetype-font"]
-        for font in font_path.iterdir():
-            if font.suffix.lower() in {'.ttf', '.otf', '.woff', '.woff2'}: arguments.extend(["--attach-file", str(font.resolve())])
-
-        self.chained_command_info = {'function': self.run_ffmpeg, 'args': (final_output_file, True)}
-        self.task_manager.mark_current_as_processing("Krok 1/2: Uruchomiono mkvmerge")
-        if self.current_task.debug_mode: self.log_debug(f"mkvmerge {' '.join(arguments)}")
-        self._start_process("mkvmerge", arguments)
-
-    def run_ffmpeg(self, mkv_file, is_final=False):
-        mkv_path = Path(mkv_file).resolve()
-        new_name = mkv_path.name.replace("_remux.mkv" if is_final else ".mkv", "_hardsub.mp4")
-        output_file = mkv_path.with_name(new_name)
-        subtitle_path_safe = self._get_safe_path_for_ffmpeg(mkv_path)
-        if self.current_task.selected_ffmpeg_script == 1:
-            arguments = ["-i", str(mkv_path), "-vf", f"format=yuv420p,subtitles='{subtitle_path_safe}'", "-map_metadata", "-1", "-movflags", "faststart", "-c:v", "libx264", "-profile:v", "main", "-level:v", "4.0", "-preset", "veryfast", "-crf", "16", "-maxrate", "20M", "-bufsize", "25M", "-x264-params", "colormatrix=bt709", "-c:a", "copy", str(output_file)]
-        else:
-            arguments = ["-y", "-vsync", "0", "-hwaccel", "cuda", "-i", str(mkv_path), "-vf", f"subtitles='{subtitle_path_safe}'", "-c:a", "copy", "-c:v", "h264_nvenc", "-preset", "p2", "-tune", "1", "-b:v", f"{self.current_task.gpu_bitrate}M", "-bufsize", "15M", "-maxrate", "15M", "-qmin", "0", "-g", "250", "-bf", "3", "-b_ref_mode", "middle", "-temporal-aq", "1", "-rc-lookahead", "20", "-i_qfactor", "0.75", "-b_qfactor", "1.1", str(output_file)]
-
-        status = "Krok 2/2: Uruchomiono FFmpeg" if is_final else "Uruchomiono FFmpeg"
-        self.task_manager.mark_current_as_processing(status)
-        if self.current_task.debug_mode: self.log_debug(f"ffmpeg {' '.join(arguments)}")
-        self._start_process("ffmpeg", arguments)
-
-    def run_ffmpeg_with_intro(self, mkv_file, intro_file):
-        mkv_path, intro_path = Path(mkv_file).resolve(), Path(intro_file).resolve()
-        output_file = mkv_path.with_name(mkv_path.stem + "_HARD.mp4")
-        subtitle_path_safe = self._get_safe_path_for_ffmpeg(mkv_path)
-        filter_complex = f"[1:v]subtitles='{subtitle_path_safe}'[v_subs];[0:v][v_subs]concat=n=2:v=1[v_out];[0:a:0][1:a:0]concat=n=2:v=0:a=1[a_out]"
-        bitrate = self.current_task.gpu_bitrate
-        arguments = ["-i", str(intro_path), "-i", str(mkv_path), "-filter_complex", filter_complex, "-map", "[v_out]", "-map", "[a_out]", "-c:v", "libx264", "-b:v", f"{bitrate}M", "-bufsize", "15M", "-maxrate", "15M", "-preset", "medium", "-c:a", "aac", "-b:a", "128k", "-profile:v", "high", "-level:v", "4.1", "-tune", "animation", "-x264-params", "deblock=-2:-1:me=umh:rc-lookahead=250:qcomp=0.60:aq-mode=3:aq-strength=0.80:merange=32:ipratio=1.30:no-dct-decimate=1:vbv-bufsize=78125:vbv-maxrate=62500:coder=default:chromaoffset=0:udu_sei=false:mbtree=1:b-pyramid=2:direct=auto:trellis=1:colormatrix=bt709", "-r:v", "24000/1001", "-sar", "1:1", "-pix_fmt", "yuv420p", "-sn", "-movflags", "faststart", "-y", str(output_file)]
-
-        self.task_manager.mark_current_as_processing("Uruchomiono FFmpeg z wstawką")
-        if self.current_task.debug_mode: self.log_debug(f"ffmpeg {' '.join(arguments)}")
-        self._start_process("ffmpeg", arguments)
+            self.output_window.append(">>> Proces zakończony.")
+            self.process = None
 
     def task_completed(self, success=True):
-        """Czyści stan po zadaniu i uruchamia następne."""
-        # POPRAWKA: Zawsze usuwamy ukończone zadanie z kolejki, niezależnie od wyniku.
-        # Informacja o błędzie jest już w logach i na liście (czerwony kolor).
-        self.task_manager.complete_current_task()
-
+        self.eta_updated.emit(-1)
+        if self.current_task:
+            self.task_manager.complete_current_task()
         self.current_task = None
         self.process = None
-        # Na końcu zawsze próbujemy uruchomić następne zadanie, jeśli jakieś jest.
         self.process_next_task()
 
     def kill_process(self):
-        """Zabija bieżący proces w sposób bezpieczny i synchroniczny."""
+        self.eta_updated.emit(-1)
         if self.is_running():
             self.process.finished.disconnect()
             self.process.kill()
             self.process.waitForFinished(-1)
-
         self.process = None
         self.current_task = None
+
+    def kill_process_and_advance(self):
+        self.kill_process()
+        self.process_next_task()
+
+    def run_mkvmerge(self, mkv_file, subtitle_file, font_folder):
+        mkv_path, sub_path, font_path = Path(mkv_file), Path(subtitle_file), Path(font_folder)
+        output_file = mkv_path.with_name(f"{mkv_path.stem}_remux.mkv")
+        args = ["-o", str(output_file), "--audio-tracks", "1", "--no-subtitles", "--no-track-tags", "--no-chapters", "--no-attachments", str(mkv_path), "--language", "0:pol", "--track-name", "0:FrixySubs", str(sub_path)]
+        for font in font_path.iterdir():
+            if font.suffix.lower() in ['.ttf', '.otf', '.woff', '.woff2']:
+                args.extend(["--attach-file", str(font)])
+        self.task_manager.mark_current_as_processing("Uruchomiono mkvmerge")
+        self._start_process("mkvmerge", args)
+
+    def run_mkvmerge_ffmpeg(self, mkv_file, subtitle_file, font_folder):
+        output_file_remux = Path(mkv_file).with_name(f"{Path(mkv_file).stem}_remux.mkv")
+        self.chained_command_info = {'function': self.run_ffmpeg, 'args': (output_file_remux, True)}
+        self.run_mkvmerge(mkv_file, subtitle_file, font_folder)
+
+    def is_running(self):
+        return self.process is not None and self.process.state() == QProcess.ProcessState.Running
+
+    def _get_safe_path_for_ffmpeg(self, file_path):
+        if not self.is_windows:
+            return str(file_path)
+        return str(file_path).replace('\\', '\\\\').replace(':', '\\:')
 
     def update_output(self):
         if self.process:
             output = bytes(self.process.readAll()).decode('utf-8', errors='ignore')
             self.output_window.append(output)
+            self._parse_ffmpeg_time(output)
             if self.current_task and self.current_task.debug_mode:
                 self.log_debug(output)
+
+    def run_ffmpeg(self, mkv_file, is_final=False):
+        mkv_path = Path(mkv_file)
+        output_file = mkv_path.with_name(mkv_path.name.replace("_remux.mkv" if is_final else ".mkv", "_hardsub.mp4"))
+        subtitle_path = self._get_safe_path_for_ffmpeg(mkv_path)
+
+        if self.current_task.selected_ffmpeg_script == 1:
+            args = ["-i", str(mkv_path), "-vf", f"format=yuv420p,subtitles='{subtitle_path}'", "-map_metadata", "-1", "-movflags", "+faststart", "-c:v", "libx264", "-profile:v", "main", "-level:v", "4.0", "-preset", "veryfast", "-crf", "16", "-maxrate", "20M", "-bufsize", "25M", "-x264-params", "colormatrix=bt709", "-c:a", "copy", str(output_file)]
+        else:
+            args = ["-y", "-vsync", "0", "-hwaccel", "cuda", "-i", str(mkv_path), "-vf", f"subtitles='{subtitle_path}'", "-c:a", "copy", "-c:v", "h264_nvenc", "-preset", "p2", "-tune", "1", "-b:v", f"{self.current_task.gpu_bitrate}M", "-bufsize", "15M", "-maxrate", "15M", "-qmin", "0", "-g", "250", "-bf", "3", "-b_ref_mode", "middle", "-temporal-aq", "1", "-rc-lookahead", "20", "-i_qfactor", "0.75", "-b_qfactor", "1.1", str(output_file)]
+
+        status = "Krok 2/2: Uruchomiono FFmpeg" if is_final else "Uruchomiono FFmpeg"
+        self.task_manager.mark_current_as_processing(status)
+        self._start_process("ffmpeg", args)
+
+    def run_ffmpeg_with_intro(self, mkv_file, intro_file):
+        mkv_path, intro_path = Path(mkv_file), Path(intro_file)
+        output_file = mkv_path.with_name(mkv_path.stem + "_HARD.mp4")
+        subtitle_path = self._get_safe_path_for_ffmpeg(mkv_path)
+        bitrate = self.current_task.gpu_bitrate
+        framerate = self._get_video_framerate(mkv_path)
+        framerate_arg = ["-r", framerate] if framerate else []
+
+        filter_complex = f"[1:v]subtitles='{subtitle_path}'[v_subs];[0:v][v_subs]concat=n=2:v=1[v_out];[0:a:0]loudnorm=I=-20:LRA=10:tp=-1.8[a_intro_norm];[1:a:0]loudnorm=I=-20:LRA=10:tp=-1.8[a_main_norm];[a_intro_norm][a_main_norm]concat=n=2:v=0:a=1[a_out]"
+        params = { "deblock": "-2,-1", "me": "umh", "subme": "10", "merange": "24", "rc_lookahead": "60", "aq-mode": "3" }
+        x264_params = ":".join(f"{k}={v}" for k, v in params.items())
+
+        args = ["-i", str(intro_path), "-i", str(mkv_path), "-filter_complex", filter_complex, "-map", "[v_out]", "-map", "[a_out]", "-c:v", "libx264", "-b:v", f"{bitrate}M", "-preset", "medium", "-c:a", "aac", "-b:a", "128k", "-x264-params", x264_params, *framerate_arg, "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", str(output_file)]
+
+        self.task_manager.mark_current_as_processing("Uruchomiono FFmpeg z wstawką")
+        self._start_process("ffmpeg", args)
 
     def log_debug(self, message):
         with open(self.log_file_path, "a", encoding='utf-8') as log_file:
