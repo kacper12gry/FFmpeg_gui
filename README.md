@@ -36,5 +36,6 @@ sudo pacman -Syu libxcb xcb-util xcb-util-image xcb-util-keysyms xcb-util-render
 
 ### Wymagania
 - Python  3.11+
-
+- FFmpeg 4.2+ (zalecane 7.0+)
+- MKVToolNix
 
