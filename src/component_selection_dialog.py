@@ -1,17 +1,21 @@
 # component_selection_dialog.py
+import os
+from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog,
                              QRadioButton, QButtonGroup, QSpinBox, QCheckBox,
                              QDialogButtonBox, QMessageBox, QHBoxLayout,
                              QToolButton, QStyle, QListWidget, QListWidgetItem)
 from PyQt6.QtCore import Qt
-from pathlib import Path
 
 class ComponentSelectionDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setStyleSheet(QApplication.instance().styleSheet())
-        self.setWindowTitle("Wybierz komponenty")
+        self.setWindowTitle("Wybierz komponenty (przeciągnij pliki na okno)")
         self.setGeometry(100, 100, 600, 450)
+
+        # Włączenie akceptowania upuszczanych plików na całym oknie
+        self.setAcceptDrops(True)
 
         self.batch_tasks = []
         self.mkv_file, self.subtitle_file, self.font_folder, self.intro_file = None, None, None, None
@@ -21,6 +25,7 @@ class ComponentSelectionDialog(QDialog):
         self.update_ui_state()
 
     def _setup_ui(self):
+        # Oryginalny, nienaruszony układ interfejsu
         self.layout = QVBoxLayout(self)
         self.mkv_label = QLabel("Plik MKV: Nie wybrano", self)
         self.mkv_button = QPushButton("Wybierz plik MKV", self)
@@ -77,26 +82,57 @@ class ComponentSelectionDialog(QDialog):
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
 
+    # --- Nowe metody obsługi Drag & Drop ---
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dropEvent(self, event):
+        urls = event.mimeData().urls()
+        for url in urls:
+            path = Path(url.toLocalFile())
+
+            # --- DODANA OBSŁUGA .MP4 ---
+            if path.suffix.lower() in ['.mp4']:
+                self.intro_file = path
+            elif path.suffix.lower() == '.mkv':
+                self.mkv_file = path
+            elif path.suffix.lower() == '.ass':
+                self.subtitle_file = path
+            elif path.is_dir():
+                self.font_folder = path
+
+        self.update_file_labels()
+        self._validate_inputs()
+        event.acceptProposedAction()
+
+    def update_file_labels(self):
+        if self.mkv_file: self.mkv_label.setText(f"Plik MKV: {self.mkv_file.name}")
+        if self.intro_file: self.intro_label.setText(f"Plik wstawki: {self.intro_file.name}")
+        if self.subtitle_file: self.subtitle_label.setText(f"Plik napisów: {self.subtitle_file.name}")
+        if self.font_folder: self.font_label.setText(f"Folder czcionek: {self.font_folder.name}")
+
     def update_ui_state(self):
-        """POPRAWKA: Przywracamy logikę opartą na setEnabled dla stabilnego interfejsu."""
         selected_id = self.button_group.checkedId()
         ffmpeg_encoder_id = self.script_button_group.checkedId()
-
-        # Określamy, które opcje są potrzebne dla danego skryptu
         needs_subtitles = selected_id in [1, 2, 3]
         needs_intro = selected_id == 4
         ffmpeg_encoder_options_enabled = selected_id in [1, 2]
         is_gpu_selected = ffmpeg_encoder_options_enabled and ffmpeg_encoder_id == 2
         bitrate_is_relevant = is_gpu_selected or needs_intro
-
-        # Włączamy lub wyłączamy (wyszarzamy) odpowiednie kontrolki
-        self.subtitle_label.setEnabled(needs_subtitles); self.subtitle_button.setEnabled(needs_subtitles)
-        self.font_label.setEnabled(needs_subtitles); self.font_button.setEnabled(needs_subtitles)
-        self.intro_label.setEnabled(needs_intro); self.intro_button.setEnabled(needs_intro)
+        self.subtitle_label.setEnabled(needs_subtitles)
+        self.subtitle_button.setEnabled(needs_subtitles)
+        self.font_label.setEnabled(needs_subtitles)
+        self.font_button.setEnabled(needs_subtitles)
+        self.intro_label.setEnabled(needs_intro)
+        self.intro_button.setEnabled(needs_intro)
         self.ffmpeg_script_label.setEnabled(ffmpeg_encoder_options_enabled)
-        self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled); self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled)
-        self.bitrate_label.setEnabled(bitrate_is_relevant); self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
-
+        self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
+        self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled)
+        self.bitrate_label.setEnabled(bitrate_is_relevant)
+        self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
         self._validate_inputs()
 
     def _validate_inputs(self):
@@ -104,8 +140,10 @@ class ComponentSelectionDialog(QDialog):
         if not ok_button: return
         is_valid = False
         selected_id = self.button_group.checkedId()
-        if selected_id in [1, 2, 3]: is_valid = all([self.mkv_file, self.subtitle_file, self.font_folder])
-        elif selected_id == 4: is_valid = all([self.mkv_file, self.intro_file])
+        if selected_id in [1, 2, 3]:
+            is_valid = all([self.mkv_file, self.subtitle_file, self.font_folder])
+        elif selected_id == 4:
+            is_valid = all([self.mkv_file, self.intro_file])
         ok_button.setEnabled(is_valid)
 
     def show_import_help_dialog(self):
@@ -197,16 +235,16 @@ class ComponentSelectionDialog(QDialog):
 
     def select_mkv_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Wybierz plik MKV", "", "MKV Files (*.mkv)")
-        if path: self.mkv_file = Path(path); self.mkv_label.setText(f"Plik MKV: {self.mkv_file.name}"); self._validate_inputs()
+        if path: self.mkv_file = Path(path); self.update_file_labels(); self._validate_inputs()
     def select_intro_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Wybierz wstawkę", "", "Video Files (*.mp4 *.mkv)")
-        if path: self.intro_file = Path(path); self.intro_label.setText(f"Plik wstawki: {self.intro_file.name}"); self._validate_inputs()
+        if path: self.intro_file = Path(path); self.update_file_labels(); self._validate_inputs()
     def select_subtitle_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Wybierz napisy", "", "ASS Files (*.ass)")
-        if path: self.subtitle_file = Path(path); self.subtitle_label.setText(f"Plik napisów: {self.subtitle_file.name}"); self._validate_inputs()
+        if path: self.subtitle_file = Path(path); self.update_file_labels(); self._validate_inputs()
     def select_font_folder(self):
         path = QFileDialog.getExistingDirectory(self, "Wybierz folder z czcionkami")
-        if path: self.font_folder = Path(path); self.font_label.setText(f"Folder czcionek: {self.font_folder.name}"); self._validate_inputs()
+        if path: self.font_folder = Path(path); self.update_file_labels(); self._validate_inputs()
 
     @property
     def selected_script(self): return self.button_group.checkedId()

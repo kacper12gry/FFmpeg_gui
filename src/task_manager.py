@@ -25,11 +25,8 @@ class Task:
             if not path_obj: return "Brak"
             return str(path_obj) if detailed else path_obj.name
 
-        # Zawsze zaczynamy od nazwy pliku
         base_description = self.mkv_file.name
         details = []
-
-        # Dodajemy szczegóły w zależności od typu skryptu
         if self.selected_script == 1:
             encoder = "CPU" if self.selected_ffmpeg_script == 1 else f"GPU ({self.gpu_bitrate} Mbps)"
             details.append(f"Typ: Hardsub | Enkoder: {encoder}")
@@ -50,10 +47,12 @@ class Task:
         return f"{base_description} | {' | '.join(details)}"
 
 class TaskManager:
-    def __init__(self, task_list_widget: QListWidget, process_manager):
+    # POPRAWKA: Dodajemy rpc_manager w konstruktorze
+    def __init__(self, task_list_widget: QListWidget, process_manager, rpc_manager):
         self.tasks = []
         self.task_list_widget = task_list_widget
         self.process_manager = process_manager
+        self.rpc_manager = rpc_manager  # Przechowujemy referencję
         self.detailed_view = False
 
     def update_list_widget(self):
@@ -62,29 +61,47 @@ class TaskManager:
 
         for i, task in enumerate(self.tasks):
             description = task.get_description(detailed=self.detailed_view)
-
             if i == 0 and is_processing:
                 description = "► " + description
-
             item = QListWidgetItem(description)
-
             if "Przetwarzanie" in task.status or "Przygotowywanie" in task.status or "Krok" in task.status:
                 item.setForeground(QColor("#E67E22"))
             elif "Błąd" in task.status:
                 item.setForeground(QColor("#F44336"))
-
             self.task_list_widget.addItem(item)
 
-    # --- Pozostałe metody bez zmian ---
-    def set_detailed_view(self, enabled: bool): self.detailed_view = enabled; self.update_list_widget()
-    def add_task(self, *args, **kwargs): task = Task(*args, **kwargs); self.tasks.append(task); self.update_list_widget()
+
+    def set_detailed_view(self, enabled: bool):
+        self.detailed_view = enabled
+        self.update_list_widget()
+
+    def add_task(self, *args, **kwargs):
+        task = Task(*args, **kwargs)
+        self.tasks.append(task)
+        self.update_list_widget()
+
     def remove_task(self, index: int):
-        if 0 <= index < len(self.tasks): self.tasks.pop(index); self.update_list_widget()
-    def get_task(self, index: int): return self.tasks[index] if 0 <= index < len(self.tasks) else None
-    def has_tasks(self): return len(self.tasks) > 0
+        if 0 <= index < len(self.tasks):
+            self.tasks.pop(index)
+            self.update_list_widget()
+
+    def get_task(self, index: int):
+        return self.tasks[index] if 0 <= index < len(self.tasks) else None
+
+    def has_tasks(self):
+        return len(self.tasks) > 0
+
     def complete_current_task(self):
-        if self.tasks: self.tasks.pop(0); self.update_list_widget()
+        if self.tasks:
+            self.tasks.pop(0)
+            self.update_list_widget()
+
     def mark_current_as_processing(self, status="Przetwarzanie..."):
-        if self.tasks: self.tasks[0].status = status; self.update_list_widget()
+        if self.tasks:
+            self.tasks[0].status = status
+            self.update_list_widget()
+
     def mark_current_as_error(self, status="Błąd"):
-        if self.tasks: self.tasks[0].status = status; self.update_list_widget()
+        if self.tasks:
+            self.tasks.status = status
+            self.update_list_widget()

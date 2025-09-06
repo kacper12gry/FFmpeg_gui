@@ -17,6 +17,8 @@ from component_selection_dialog import ComponentSelectionDialog
 from task_manager import TaskManager
 from theme_manager import get_dark_theme_qss, get_light_theme_qss
 from diagnostic_dialog import DiagnosticDialog
+# NOWY IMPORT
+from discord_rpc_manager import DiscordRPCManager
 
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
@@ -29,10 +31,16 @@ class MainWindow(QMainWindow):
 
         self.setup_ui()
 
-        self.process_manager = ProcessManager(None, self.output_window, debug_mode=False)
-        # POPRAWKA: Przekazujemy process_manager do TaskManagera
-        self.task_manager = TaskManager(self.task_list, self.process_manager)
-        self.process_manager.task_manager = self.task_manager # Uzupełniamy referencję
+        # NOWOŚĆ: Inicjalizacja menedżera Discord RPC
+        self.rpc_manager = DiscordRPCManager(app_id='1407826664381087896')
+
+        # POPRAWKA: Przekazujemy rpc_manager do odpowiednich klas
+        self.process_manager = ProcessManager(None, self.output_window, self.rpc_manager, debug_mode=False)
+        self.task_manager = TaskManager(self.task_list, self.process_manager, self.rpc_manager)
+
+        # Uzupełniamy wzajemne referencje
+        self.process_manager.task_manager = self.task_manager
+        self.rpc_manager.task_manager = self.task_manager
 
         self.process_manager.eta_updated.connect(self.update_eta_display)
 
@@ -81,11 +89,16 @@ class MainWindow(QMainWindow):
             self.theme_group.addAction(action)
             self.theme_actions[key] = action
 
-        # POPRAWKA: Nowe menu "Opcje"
+        # Menu "Opcje"
         options_menu = menu_bar.addMenu("Opcje")
         self.detailed_view_action = QAction("Szczegółowy widok zadań", self, checkable=True)
         self.detailed_view_action.triggered.connect(self.toggle_detailed_view)
         options_menu.addAction(self.detailed_view_action)
+
+        # NOWOŚĆ: Przełącznik dla Discord RPC
+        self.discord_rpc_action = QAction("Integracja z Discord", self, checkable=True)
+        self.discord_rpc_action.triggered.connect(self.toggle_discord_rpc)
+        options_menu.addAction(self.discord_rpc_action)
 
         # Pozostałe menu
         diagnostic_action = QAction("Diagnostyka", self); diagnostic_action.triggered.connect(self.show_diagnostic_dialog)
@@ -97,12 +110,20 @@ class MainWindow(QMainWindow):
     def toggle_detailed_view(self, checked):
         self.task_manager.set_detailed_view(checked)
 
+    # NOWA METODA: Obsługa przełącznika Discord RPC
+    def toggle_discord_rpc(self, checked):
+        if checked:
+            self.rpc_manager.start()
+        else:
+            self.rpc_manager.stop()
+
     def save_settings(self):
         settings = QSettings("settings.ini", QSettings.Format.IniFormat)
         current_theme = next((key for key, action in self.theme_actions.items() if action.isChecked()), "system")
         settings.setValue("theme", current_theme)
-        # POPRAWKA: Zapisujemy stan nowego przełącznika
         settings.setValue("detailed_view", self.detailed_view_action.isChecked())
+        # NOWOŚĆ: Zapisujemy stan integracji z Discord
+        settings.setValue("discord_rpc_enabled", self.discord_rpc_action.isChecked())
 
     def load_settings(self):
         settings = QSettings("settings.ini", QSettings.Format.IniFormat)
@@ -111,10 +132,15 @@ class MainWindow(QMainWindow):
             self.theme_actions[theme_name].setChecked(True)
             self.apply_theme(theme_name)
 
-        # POPRAWKA: Wczytujemy stan nowego przełącznika
         detailed_view_enabled = settings.value("detailed_view", False, type=bool)
         self.detailed_view_action.setChecked(detailed_view_enabled)
         self.task_manager.set_detailed_view(detailed_view_enabled)
+
+        # NOWOŚĆ: Wczytujemy i stosujemy stan integracji z Discord (domyślnie wyłączone)
+        rpc_enabled = settings.value("discord_rpc_enabled", False, type=bool)
+        self.discord_rpc_action.setChecked(rpc_enabled)
+        if rpc_enabled:
+            self.rpc_manager.start()
 
     def apply_theme(self, theme_name):
         app = QApplication.instance()
@@ -126,7 +152,29 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(self.original_stylesheet)
 
     def closeEvent(self, event):
+        """
+        Przed zamknięciem aplikacji sprawdza, czy w tle nie działają zadania.
+        Jeśli tak, prosi użytkownika o potwierdzenie.
+        """
+        # Sprawdzamy, czy jakikolwiek proces jest w toku
+        if self.process_manager.is_running():
+            reply = QMessageBox.question(
+                self,
+                "Potwierdzenie zamknięcia",
+                "Aktywne zadanie jest w trakcie przetwarzania.\nCzy na pewno chcesz zamknąć program? Spowoduje to przerwanie zadania.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No
+            )
+
+            # Jeśli użytkownik wybierze "Nie", ignorujemy zdarzenie zamknięcia
+            if reply == QMessageBox.StandardButton.No:
+                event.ignore()
+                return
+
+        # Jeśli nic nie jest przetwarzane lub użytkownik potwierdził zamknięcie:
         self.save_settings()
+        self.process_manager.kill_process() # Upewniamy się, że proces potomny jest zabijany
+        self.rpc_manager.stop()
         super().closeEvent(event)
 
     # --- Pozostałe metody bez istotnych zmian ---
@@ -153,7 +201,7 @@ class MainWindow(QMainWindow):
     def show_diagnostic_dialog(self): dialog = DiagnosticDialog(self.output_window, self); dialog.exec()
     def show_about_dialog(self):
         platform_name = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.0\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
+        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.1\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
     def refresh_program(self): self.close(); QProcess.startDetached(sys.executable, sys.argv)
 
 if __name__ == "__main__":
