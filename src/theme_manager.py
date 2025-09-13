@@ -12,15 +12,36 @@ def get_dark_theme_qss():
         border: none;
     }}
 
-    /* --- Przyciski --- */
-    QPushButton, QDialogButtonBox QPushButton, QToolButton {{
-        background-color: #E67E22; color: #ffffff;
-        padding: 6px 14px; border-radius: 5px;
-        font-weight: 600; min-height: 26px;
+    /* --- Przyciski i Pasek Narzędzi --- */
+    QPushButton, QToolButton, QDialogButtonBox QPushButton {{
+        background-color: #E67E22;
+        color: #ffffff;
+        padding: 6px 14px;
+        border-radius: 5px;
+        font-weight: 600;
+        min-height: 26px;
+        border: none;
     }}
-    QPushButton:hover, QToolButton:hover {{ background-color: #D35400; }}
-    QPushButton:disabled, QToolButton:disabled {{ background-color: #555555; color: #888888; }}
-    QToolButton {{ padding: 6px; }}
+    QPushButton:hover, QToolButton:hover {{
+        background-color: #D35400;
+    }}
+    QPushButton:disabled, QToolButton:disabled {{
+        background-color: #555555;
+        color: #888888;
+    }}
+
+    QToolBar {{
+        background-color: #2b2b2b;
+        border: none;
+        padding: 2px;
+        spacing: 5px;
+    }}
+
+    QToolBar QToolButton {{
+        padding: 6px 10px;
+        font-weight: normal;
+    }}
+
 
     /* --- Pola wejściowe --- */
     QLineEdit, QSpinBox, QComboBox {{
@@ -80,6 +101,7 @@ def get_dark_theme_qss():
         border-radius: 5px;
         padding: 5px;
         outline: 0px; /* Całkowite wyłączenie systemowego obramowania */
+        font-family: "Consolas", "Monaco", "monospace"; /* Czcionka o stałej szerokości dla logów */
     }}
     /* --- NOWE: Obejście dla białej poświaty --- */
     QTextEdit:focus, QListWidget:focus {{
@@ -163,6 +185,21 @@ def get_dark_theme_qss():
     QMenu::indicator:exclusive:checked {{
         image: url(icon/radio.svg);
     }}
+        /* --- Pasek Postępu (ProgressBar) --- */
+    QProgressBar {{
+        border: 1px solid #4f4f4f;
+        border-radius: 5px;
+        background-color: #2b2b2b;
+        text-align: center;
+        color: #e0e0e0; /* Kolor tekstu procentowego height: 6px; */
+    }}
+
+    QProgressBar::chunk {{
+        background-color: #E67E22; /* Kolor paska postępu */
+        border-radius: 4px;
+        margin: 1px; /* Daje mały odstęp między paskiem a ramką */
+    }}
+
 
     /* --- Pozostałe --- */
     QGroupBox {{
@@ -173,7 +210,6 @@ def get_dark_theme_qss():
         subcontrol-origin: margin; subcontrol-position: top center;
         padding: 0 5px;
     }}
-
     /* --- Paski przewijania (ScrollBars) --- */
     QScrollBar:vertical, QScrollBar:horizontal {{
         background: #212121;

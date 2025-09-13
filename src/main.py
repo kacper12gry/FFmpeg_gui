@@ -1,24 +1,22 @@
-# main.py
 import sys
 import os
 import platform
-
 if platform.system() == "Windows":
     import ctypes
-
-# Poprawiony import, aby zawierał wszystkie potrzebne klasy
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout,
                              QWidget, QListWidget, QAbstractItemView, QMessageBox, QDialog,
-                             QGroupBox, QSplitter, QStyleFactory, QLabel, QListView)
+                             QGroupBox, QSplitter, QStyleFactory, QLabel, QListView, QMenu)
 from PyQt6.QtCore import QProcess, Qt, QSettings
 from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication
 
+# Importy lokalnych modułów
 from process_manager import ProcessManager
 from component_selection_dialog import ComponentSelectionDialog
 from task_manager import TaskManager
 from theme_manager import get_dark_theme_qss, get_light_theme_qss
 from diagnostic_dialog import DiagnosticDialog
 from discord_rpc_manager import DiscordRPCManager
+from plugin_manager import PluginManager # <-- NOWY IMPORT
 
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
@@ -28,19 +26,21 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Automatyzer by kacper12gry")
         self.setGeometry(100, 100, 700, 500)
         self.setWindowIcon(QIcon("icon/icon.svg"))
-
         self.settings = QSettings("settings.ini", QSettings.Format.IniFormat)
+
+        # Inicjalizacja PluginManagera
+        self.plugin_manager = PluginManager(self)
+        self.plugin_manager.scan_for_plugins()
+
         self.setup_ui()
         self.rpc_manager = DiscordRPCManager(app_id='1407826664381087896')
-
         self.task_manager = TaskManager(self.task_list, None, self.rpc_manager)
         self.process_manager = ProcessManager(self.task_manager, self.output_window, self.rpc_manager, debug_mode=False)
         self.task_manager.process_manager = self.process_manager
-
         self.rpc_manager.task_manager = self.task_manager
-
         self.process_manager.eta_updated.connect(self.update_eta_display)
-        self.create_menu_bar()
+
+        self.create_menu_bar() # Tworzy menu po zainicjalizowaniu managera
         self.load_settings()
 
     def setup_ui(self):
@@ -49,7 +49,6 @@ class MainWindow(QMainWindow):
         self.refresh_button.setMaximumWidth(100)
         self.output_window = QTextEdit(self); self.output_window.setReadOnly(True)
         self.task_list = QListWidget(self); self.task_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-
         self.cancel_button = QPushButton("Anuluj wybrane zadanie", self)
         self.eta_label = QLabel("Czas do końca: -"); self.eta_label.setVisible(False)
         task_controls_layout = QHBoxLayout(); task_controls_layout.addWidget(self.cancel_button); task_controls_layout.addStretch(); task_controls_layout.addWidget(self.eta_label)
@@ -65,6 +64,8 @@ class MainWindow(QMainWindow):
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
+
+        # Standardowe menu
         options_menu = menu_bar.addMenu("Opcje")
         theme_menu = options_menu.addMenu("Motyw")
         self.theme_group = QActionGroup(self); self.theme_group.setExclusive(True)
@@ -81,8 +82,23 @@ class MainWindow(QMainWindow):
         self.discord_rpc_action = QAction("Integracja z Discord", self, checkable=True)
         self.discord_rpc_action.toggled.connect(self.toggle_discord_rpc)
         options_menu.addAction(self.discord_rpc_action)
+
+        # Akcja Diagnostyki
         diagnostic_action = QAction("Diagnostyka", self); diagnostic_action.triggered.connect(self.show_diagnostic_dialog)
         menu_bar.addAction(diagnostic_action)
+
+        # --- NOWA SEKCJA: Menu DLC ---
+        plugins = self.plugin_manager.get_plugins()
+        if plugins:
+            dlc_menu = menu_bar.addMenu("DLC")
+            for plugin in plugins:
+                action = QAction(plugin['name'], self)
+                action.setStatusTip(plugin['description'])
+                action.triggered.connect(lambda checked, p=plugin: self.plugin_manager.launch_plugin(p))
+                dlc_menu.addAction(action)
+        # -----------------------------
+
+        # Akcja "O programie" zawsze na końcu
         about_action = QAction("O programie", self); about_action.triggered.connect(self.show_about_dialog)
         menu_bar.addAction(about_action)
 
@@ -95,9 +111,7 @@ class MainWindow(QMainWindow):
                 action.setChecked(True); break
         detailed_view_enabled = self.settings.value("detailed_view", False, type=bool)
         self.detailed_view_action.setChecked(detailed_view_enabled)
-        # Wywołujemy toggle_detailed_view, aby na starcie ustawić poprawny wygląd listy
         self.toggle_detailed_view(detailed_view_enabled)
-
         rpc_enabled = self.settings.value("discord_rpc_enabled", False, type=bool)
         self.discord_rpc_action.setChecked(rpc_enabled)
         if rpc_enabled: self.rpc_manager.start()
@@ -120,21 +134,14 @@ class MainWindow(QMainWindow):
             app.setStyleSheet(self.original_stylesheet)
 
     def toggle_detailed_view(self, checked):
-        # --- KLUCZOWA ZMIANA ---
-        # Ta metoda teraz dynamicznie zmienia wygląd listy zadań
         if checked:
-            # WIDOK SZCZEGÓŁOWY: zawijaj tekst, ukryj suwak poziomy
             self.task_list.setWordWrap(True)
             self.task_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
             self.task_list.setUniformItemSizes(False)
             self.task_list.setResizeMode(QListView.ResizeMode.Adjust)
         else:
-            # WIDOK STANDARDOWY: nie zawijaj, pokaż suwak poziomy w razie potrzeby
             self.task_list.setWordWrap(False)
             self.task_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-            # Można przywrócić uniform sizes, jeśli wszystkie elementy mają mieć tę samą wysokość
-            # self.task_list.setUniformItemSizes(True)
-
         self.task_manager.set_detailed_view(checked)
 
     def toggle_discord_rpc(self, checked):
@@ -165,15 +172,10 @@ class MainWindow(QMainWindow):
     def open_component_selection_dialog(self):
         dialog = ComponentSelectionDialog(self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
-            # --- KLUCZOWA POPRAWKA ---
-            # Sprawdzamy, czy dialog zwrócił zadania z importu
             if dialog.batch_tasks:
-                # Jeśli tak, iterujemy po nich i dodajemy do TaskManagera
                 for task_data in dialog.batch_tasks:
-                    # Rozpakowujemy krotkę i przekazujemy jako osobne argumenty
                     self.task_manager.add_task(*task_data)
             else:
-                # Jeśli nie było importu, dodajemy zadanie skonfigurowane ręcznie
                 self.task_manager.add_task(
                     dialog.mkv_file, dialog.subtitle_file, dialog.font_folder,
                     dialog.selected_script, dialog.selected_ffmpeg_script,
@@ -181,17 +183,17 @@ class MainWindow(QMainWindow):
                     getattr(dialog, 'intro_file', None),
                     dialog.output_path
                 )
-
-            # Po dodaniu zadań (z importu lub ręcznie), uruchamiamy przetwarzanie, jeśli kolejka była pusta
             if not self.process_manager.is_running():
                 self.process_manager.process_next_task()
 
     def show_diagnostic_dialog(self):
-        dialog = DiagnosticDialog(self.output_window, self); dialog.exec()
+        # Przekazujemy plugin_manager do okna diagnostyki
+        dialog = DiagnosticDialog(self.output_window, self.plugin_manager, self)
+        dialog.exec()
 
     def show_about_dialog(self):
         platform_name = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.2\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
+        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.3\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
 
     def refresh_program(self):
         self.close(); QProcess.startDetached(sys.executable, sys.argv)
