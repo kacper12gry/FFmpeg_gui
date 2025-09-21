@@ -8,21 +8,59 @@ from PyQt6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushBu
 from PyQt6.QtCore import Qt, QSettings
 
 class ComponentSelectionDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, use_per_option_paths=False, parent=None):
         super().__init__(parent)
+        self.use_per_option_paths = use_per_option_paths
+
         self.setStyleSheet(QApplication.instance().styleSheet())
         self.setWindowTitle("Wybierz Komponenty")
         self.setGeometry(100, 100, 650, 650)
         self.setAcceptDrops(True)
         self.settings = QSettings("settings.ini", QSettings.Format.IniFormat)
+
         self.batch_tasks = []
         self.mkv_file, self.subtitle_file, self.font_folder, self.intro_file = None, None, None, None
         self.output_path = None
         self.default_output_name = ""
+
         self._setup_ui()
         self._connect_signals()
         self.update_ui_state()
         self._load_suffixes()
+        self._apply_initial_paths() # <-- ZMIANA NAZWY: ścieżki w liczbie mnogiej
+
+    def _apply_initial_paths(self):
+        """
+        Na starcie dialogu ustawia zapisaną ścieżkę dla domyślnie wybranej opcji
+        oraz domyślny plik wstawki.
+        """
+        # Ustaw domyślny plik wstawki, jeśli istnieje
+        intro_path_str = self.settings.value("file_intro", "")
+        if intro_path_str and Path(intro_path_str).is_file():
+            self.intro_file = Path(intro_path_str)
+            self.update_file_labels()
+
+        # Ustaw domyślny folder wyjściowy dla aktywnej opcji
+        if self.use_per_option_paths:
+            current_id = str(self.button_group.checkedId())
+            saved_path = self.settings.value(f"path_{current_id}", "")
+            if saved_path:
+                self.output_dir_edit.setText(saved_path)
+                self.custom_output_checkbox.setChecked(True)
+
+    def _on_script_option_changed(self):
+        """Aktualizuje pole ścieżki wyjściowej na podstawie zapisanej konfiguracji."""
+        if self.use_per_option_paths:
+            current_id = str(self.button_group.checkedId())
+            # Opcja nr 2 jest ignorowana
+            if current_id == '2':
+                self.output_dir_edit.clear()
+                self.custom_output_checkbox.setChecked(False)
+                return
+
+            saved_path = self.settings.value(f"path_{current_id}", "")
+            self.output_dir_edit.setText(saved_path)
+            self.custom_output_checkbox.setChecked(bool(saved_path))
 
     def _setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -141,6 +179,7 @@ class ComponentSelectionDialog(QDialog):
         self.subtitle_button.clicked.connect(self.select_subtitle_file)
         self.font_button.clicked.connect(self.select_font_folder)
         self.button_group.buttonClicked.connect(self.update_ui_state)
+        self.button_group.buttonClicked.connect(self._on_script_option_changed)
         self.script_button_group.buttonClicked.connect(self.update_ui_state)
         self.import_button.clicked.connect(self.import_from_txt)
         self.help_button.clicked.connect(self.show_import_help_dialog)

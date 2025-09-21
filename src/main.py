@@ -16,7 +16,8 @@ from task_manager import TaskManager
 from theme_manager import get_dark_theme_qss, get_light_theme_qss
 from diagnostic_dialog import DiagnosticDialog
 from discord_rpc_manager import DiscordRPCManager
-from plugin_manager import PluginManager # <-- NOWY IMPORT
+from plugin_manager import PluginManager
+from paths_config_dialog import PathsConfigDialog
 
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
@@ -28,7 +29,6 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("icon/icon.svg"))
         self.settings = QSettings("settings.ini", QSettings.Format.IniFormat)
 
-        # Inicjalizacja PluginManagera
         self.plugin_manager = PluginManager(self)
         self.plugin_manager.scan_for_plugins()
 
@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
         self.rpc_manager.task_manager = self.task_manager
         self.process_manager.eta_updated.connect(self.update_eta_display)
 
-        self.create_menu_bar() # Tworzy menu po zainicjalizowaniu managera
+        self.create_menu_bar()
         self.load_settings()
 
     def setup_ui(self):
@@ -65,7 +65,6 @@ class MainWindow(QMainWindow):
     def create_menu_bar(self):
         menu_bar = self.menuBar()
 
-        # Standardowe menu
         options_menu = menu_bar.addMenu("Opcje")
         theme_menu = options_menu.addMenu("Motyw")
         self.theme_group = QActionGroup(self); self.theme_group.setExclusive(True)
@@ -76,18 +75,26 @@ class MainWindow(QMainWindow):
             self.theme_group.addAction(action)
             theme_menu.addAction(action)
         options_menu.addSeparator()
+
+        self.config_paths_action = QAction("Konfiguruj ścieżki zapisu...", self)
+        self.config_paths_action.triggered.connect(self.open_paths_config_dialog)
+        options_menu.addAction(self.config_paths_action)
+
+        self.use_per_option_paths_action = QAction("Używaj niestandardowych ścieżek dla opcji", self, checkable=True)
+        options_menu.addAction(self.use_per_option_paths_action)
+
+        options_menu.addSeparator()
         self.detailed_view_action = QAction("Szczegółowy widok zadań", self, checkable=True)
         self.detailed_view_action.toggled.connect(self.toggle_detailed_view)
         options_menu.addAction(self.detailed_view_action)
+
         self.discord_rpc_action = QAction("Integracja z Discord", self, checkable=True)
         self.discord_rpc_action.toggled.connect(self.toggle_discord_rpc)
         options_menu.addAction(self.discord_rpc_action)
 
-        # Akcja Diagnostyki
         diagnostic_action = QAction("Diagnostyka", self); diagnostic_action.triggered.connect(self.show_diagnostic_dialog)
         menu_bar.addAction(diagnostic_action)
 
-        # --- NOWA SEKCJA: Menu DLC ---
         plugins = self.plugin_manager.get_plugins()
         if plugins:
             dlc_menu = menu_bar.addMenu("DLC")
@@ -96,22 +103,24 @@ class MainWindow(QMainWindow):
                 action.setStatusTip(plugin['description'])
                 action.triggered.connect(lambda checked, p=plugin: self.plugin_manager.launch_plugin(p))
                 dlc_menu.addAction(action)
-        # -----------------------------
 
-        # Akcja "O programie" zawsze na końcu
         about_action = QAction("O programie", self); about_action.triggered.connect(self.show_about_dialog)
         menu_bar.addAction(about_action)
 
     def load_settings(self):
         theme_name = self.settings.value("theme", "system", type=str)
         self.apply_theme(theme_name)
-        actions = self.theme_group.actions()
-        for action in actions:
+        for action in self.theme_group.actions():
             if action.text().lower().startswith(theme_name):
                 action.setChecked(True); break
+
+        use_paths_enabled = self.settings.value("use_per_option_paths", False, type=bool)
+        self.use_per_option_paths_action.setChecked(use_paths_enabled)
+
         detailed_view_enabled = self.settings.value("detailed_view", False, type=bool)
         self.detailed_view_action.setChecked(detailed_view_enabled)
         self.toggle_detailed_view(detailed_view_enabled)
+
         rpc_enabled = self.settings.value("discord_rpc_enabled", False, type=bool)
         self.discord_rpc_action.setChecked(rpc_enabled)
         if rpc_enabled: self.rpc_manager.start()
@@ -121,8 +130,37 @@ class MainWindow(QMainWindow):
         if checked_action:
             theme_name = next(key for key, text in {"system": "Systemowy", "dark": "Ciemny", "light": "Fusion"}.items() if text == checked_action.text())
             self.settings.setValue("theme", theme_name)
+
+        self.settings.setValue("use_per_option_paths", self.use_per_option_paths_action.isChecked())
         self.settings.setValue("detailed_view", self.detailed_view_action.isChecked())
         self.settings.setValue("discord_rpc_enabled", self.discord_rpc_action.isChecked())
+
+    # --- BRAKUJĄCA METODA - JUŻ DODANA ---
+    def open_paths_config_dialog(self):
+        """Otwiera nowe okno dialogowe do konfiguracji ścieżek."""
+        dialog = PathsConfigDialog(self.settings, self)
+        dialog.exec()
+    # ------------------------------------
+
+    def open_component_selection_dialog(self):
+        """Przekazuje stan opcji do dialogu wyboru komponentów."""
+        use_per_option_paths = self.use_per_option_paths_action.isChecked()
+        dialog = ComponentSelectionDialog(use_per_option_paths, self)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            if dialog.batch_tasks:
+                for task_data in dialog.batch_tasks:
+                    self.task_manager.add_task(*task_data)
+            else:
+                self.task_manager.add_task(
+                    dialog.mkv_file, dialog.subtitle_file, dialog.font_folder,
+                    dialog.selected_script, dialog.selected_ffmpeg_script,
+                    dialog.gpu_bitrate, dialog.debug_mode,
+                    getattr(dialog, 'intro_file', None),
+                    dialog.output_path
+                )
+            if not self.process_manager.is_running():
+                self.process_manager.process_next_task()
 
     def apply_theme(self, theme_name):
         app = QApplication.instance()
@@ -169,31 +207,13 @@ class MainWindow(QMainWindow):
         if is_active: self.process_manager.kill_process_and_advance()
         elif not self.process_manager.is_running(): self.process_manager.process_next_task()
 
-    def open_component_selection_dialog(self):
-        dialog = ComponentSelectionDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            if dialog.batch_tasks:
-                for task_data in dialog.batch_tasks:
-                    self.task_manager.add_task(*task_data)
-            else:
-                self.task_manager.add_task(
-                    dialog.mkv_file, dialog.subtitle_file, dialog.font_folder,
-                    dialog.selected_script, dialog.selected_ffmpeg_script,
-                    dialog.gpu_bitrate, dialog.debug_mode,
-                    getattr(dialog, 'intro_file', None),
-                    dialog.output_path
-                )
-            if not self.process_manager.is_running():
-                self.process_manager.process_next_task()
-
     def show_diagnostic_dialog(self):
-        # Przekazujemy plugin_manager do okna diagnostyki
         dialog = DiagnosticDialog(self.output_window, self.plugin_manager, self)
         dialog.exec()
 
     def show_about_dialog(self):
         platform_name = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.3\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
+        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.4\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
 
     def refresh_program(self):
         self.close(); QProcess.startDetached(sys.executable, sys.argv)

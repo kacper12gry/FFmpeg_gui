@@ -57,8 +57,7 @@ class PluginManager:
 
     def launch_plugin(self, plugin_info):
         """
-        Uruchamia wybrany dodatek jako osobny proces, inteligentnie przekazując
-        informacje o motywie.
+        Uruchamia wybrany dodatek jako osobny proces i podłącza mechanizm czyszczący.
         """
         executable_path = plugin_info['path'] / plugin_info['executable']
 
@@ -67,31 +66,29 @@ class PluginManager:
             return
 
         app = QApplication.instance()
-
-        # --- KLUCZOWA ZMIANA: Inteligentne określanie stylu ---
-
-        # Pobierz aktualny styl i arkusz stylów z głównej aplikacji
         current_style_name = app.style().objectName()
         stylesheet = app.styleSheet()
+        style_to_pass = 'Fusion' if stylesheet else current_style_name
 
-        # Domyślnie przekazujemy to, co jest w aplikacji głównej
-        style_to_pass = current_style_name
-
-        # Jeśli arkusz stylów jest pusty, to znaczy, że używamy motywu systemowego.
-        # Jeśli jednak nie jest pusty, to znaczy, że mamy motyw "Ciemny" lub "Jasny",
-        # które wymagają stylu "Fusion" do poprawnego działania.
-        if stylesheet:
-            style_to_pass = 'Fusion'
-
-        # Przygotuj argumenty do przekazania
-        args = [str(executable_path)]
-        args.extend(['--style-name', style_to_pass])
-
+        args = [str(executable_path), '--style-name', style_to_pass]
         if stylesheet:
             encoded_stylesheet = base64.b64encode(stylesheet.encode('utf-8')).decode('utf-8')
             args.extend(['--stylesheet-b64', encoded_stylesheet])
 
-        # Uruchom proces z dodatkowymi argumentami
         process = QProcess(self.parent)
+
+        # --- KLUCZOWA ZMIANA ---
+        # Po zakończeniu procesu (normalnie lub przez błąd), uruchom metodę czyszczącą.
+        process.finished.connect(lambda: self.cleanup_process(process))
+        # ---------------------
+
         process.start(sys.executable, args)
         self.processes.append(process)
+
+    def cleanup_process(self, process):
+        """
+        Usuwa referencję do zakończonego procesu z listy, aby zwolnić pamięć.
+        """
+        if process in self.processes:
+            self.processes.remove(process)
+            print(f"Oczyszczono zakończony proces dodatku.") # Opcjonalny log
