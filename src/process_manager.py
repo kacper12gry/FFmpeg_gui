@@ -9,6 +9,7 @@ import subprocess
 
 class ProcessManager(QObject):
     eta_updated = pyqtSignal(int)
+    log_message = pyqtSignal(str)
     def __init__(self, task_manager, output_window, rpc_manager, debug_mode=False):
         super().__init__()
         self.task_manager = task_manager
@@ -43,11 +44,17 @@ class ProcessManager(QObject):
             self.log_debug(f"Błąd ffprobe: {e}")
             return None
 
+    # --- KRYTYCZNA POPRAWKA ---
     def _get_video_duration(self, video_path):
-        if not video_path: return 0
+        if not video_path: return 0.0
         command = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
         duration_str = self._run_ffprobe_command(command)
-        return float(duration_str) if duration_str else 0
+
+        try:
+            return float(duration_str)
+        except (ValueError, TypeError):
+            self.log_message.emit(f"OSTRZEŻENIE: Nie udało się odczytać czasu trwania z pliku '{video_path.name}'. Może być uszkodzony.")
+            return 0.0
 
     def _get_video_framerate(self, video_path):
         if not video_path: return None

@@ -213,7 +213,7 @@ class MainWindow(QMainWindow):
 
     def show_about_dialog(self):
         platform_name = "Wayland" if "wayland" in os.getenv("XDG_SESSION_TYPE", "").lower() else "X11"
-        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.4\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
+        QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion 4.5\n\nProgram do automatyzacji remuxowania i wypalania napisów.\n\nDziała na: {platform_name}")
 
     def refresh_program(self):
         self.close(); QProcess.startDetached(sys.executable, sys.argv)
