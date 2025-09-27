@@ -191,34 +191,41 @@ class ComponentSelectionDialog(QDialog):
         if path: self.output_dir_edit.setText(path)
 
     # --- KLUCZOWA POPRAWKA LOGICZNA ---
+    # W pliku: component_selection_dialog.py
+
     def accept(self):
-        # Ścieżka 1: Tryb wsadowy. Jeśli są zadania z importu, zamknij okno i nic więcej nie sprawdzaj.
+        # Jeśli zadania pochodzą z importu pliku, natychmiast zamknij okno.
         if self.batch_tasks:
             super().accept()
             return
 
-        # Ścieżka 2: Tryb pojedynczy. Wykonaj normalną walidację dla zadania z GUI.
+        # Dla pojedynczego zadania, najpierw zweryfikuj wymagane pliki wejściowe.
         if not self._validate_inputs(show_error=True):
             return
 
-        # Ustaw ścieżkę wyjściową na podstawie opcji w GUI
-        if self.button_group.checkedId() == 2:
-            self.output_path = None
-        elif self.custom_output_checkbox.isChecked():
-            output_dir, output_name = self.output_dir_edit.text(), self.output_name_edit.text()
+        # --- NOWA, POPRAWNA LOGIKA ---
+
+        # Sprawdź, czy użytkownik chce użyć niestandardowych ustawień.
+        if self.custom_output_checkbox.isChecked():
+            # Jeśli tak, zweryfikuj podane przez niego ścieżki.
+            output_dir = self.output_dir_edit.text()
+            output_name = self.output_name_edit.text()
             if not output_dir or not output_name:
-                QMessageBox.warning(self, "Błąd", "W niestandardowych ustawieniach wyjściowych folder i nazwa pliku nie mogą być puste.")
+                QMessageBox.warning(self, "Błąd", "W niestandardowych ustawieniach folder i nazwa pliku nie mogą być puste.")
                 return
             if not os.path.isdir(output_dir):
                 QMessageBox.warning(self, "Błąd", "Wybrany folder wyjściowy nie istnieje.")
                 return
+            # Ustaw pełną, niestandardową ścieżkę wyjściową.
             self.output_path = Path(output_dir) / output_name
         else:
-            # Domyślne wyjście (folder pliku źródłowego)
-            if self.mkv_file:
-                self.output_path = self.mkv_file.parent / self.output_name_edit.text()
-            else:
-                self.output_path = None
+            # Jeśli checkbox jest ODZNACZONY, jawnie ustawiamy ścieżkę na None.
+            # To jest sygnał dla ProcessManagera, aby sam wygenerował domyślną ścieżkę.
+            self.output_path = None
+
+        # Skrypt typu 2 nigdy nie używa ścieżki wyjściowej, więc dla pewności ją zerujemy.
+        if self.button_group.checkedId() == 2:
+            self.output_path = None
 
         super().accept()
 
