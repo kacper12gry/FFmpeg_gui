@@ -1,8 +1,9 @@
-# task_manager.py
+# task_manager.py (Wersja z obsługą konfigurowalnej nazwy ścieżki napisów)
+
 from PyQt6.QtWidgets import QListWidgetItem
 from PyQt6.QtGui import QColor
 from pathlib import Path
-from dataclasses import dataclass
+from dataclasses import dataclass, field # Dodano import 'field'
 
 @dataclass
 class Task:
@@ -15,12 +16,16 @@ class Task:
     debug_mode: bool
     intro_file: Path | None
     output_path: Path | None = None
+    subtitle_track_name: str = field(default="")
+    movie_name: str = field(default="")
+    keep_original_movie_name: bool = field(default=False) # Dodajemy to pole
+
     status: str = "Oczekuje"
 
     def get_description(self, detailed: bool = False):
-        if not self.mkv_file: return "Zadanie z importu (brak danych)"
+        if not self.mkv_file:
+            return "Zadanie z importu (brak danych)"
 
-        # --- WIDOK SZCZEGÓŁOWY (WIELOLINIOWY) ---
         if detailed:
             details = [f"Plik: {self.mkv_file}"]
 
@@ -34,6 +39,25 @@ class Task:
             if self.selected_script == 4 and self.intro_file:
                 details.append(f"  > Wstawka: {path_repr_detailed(self.intro_file)}")
 
+            # --- NOWA, ZINTEGROWANA LOGIKA WYŚWIETLANIA ---
+            if self.selected_script in [2, 3]: # Tylko dla opcji z remuxem
+                remux_info_parts = []
+                # Pokaż nazwę ścieżki tylko, jeśli nie jest pusta
+                if self.subtitle_track_name.strip():
+                    remux_info_parts.append(f"Nazwa ścieżki: {self.subtitle_track_name}")
+
+                # Logika wyświetlania Movie Name
+                if self.keep_original_movie_name:
+                    remux_info_parts.append("Tytuł filmu: Zachowany")
+                elif self.movie_name:
+                    remux_info_parts.append(f"Tytuł filmu: {self.movie_name}")
+                else:
+                    remux_info_parts.append("Tytuł filmu: Usunięty")
+
+                if remux_info_parts:
+                    details.append(f"  > Remux: {' | '.join(remux_info_parts)}")
+            # -----------------------------------------------
+
             script_info = ""
             if self.selected_script == 1:
                 encoder = "CPU" if self.selected_ffmpeg_script == 1 else f"GPU ({self.gpu_bitrate} Mbps)"
@@ -45,20 +69,14 @@ class Task:
                 script_info = "Typ: Tylko Remux"
             elif self.selected_script == 4:
                 script_info = f"Typ: FFmpeg + Wstawka | Bitrate: {self.gpu_bitrate} Mbps"
-
             details.append(f"  > Skrypt: {script_info}")
 
-            # --- NOWA, DODANA LINIA ---
-            # Wyświetla ścieżkę wyjściową, jeśli jest niestandardowa
             if self.output_path:
                 details.append(f"  > Wyjście: {path_repr_detailed(self.output_path)}")
-
             if self.status != "Oczekuje":
                 details.append(f"  > Status: {self.status}")
 
             return "\n".join(details)
-
-        # --- WIDOK STANDARDOWY (JEDNOLINIOWY, TECHNICZNY) ---
         else:
             base_description = self.mkv_file.name
             details = []
@@ -118,7 +136,8 @@ class TaskManager:
         self.detailed_view = enabled
         self.update_list_widget()
 
-    def add_task(self, mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode, intro_file, output_path=None):
+    # --- ZMIANA 3: Zaktualizowana sygnatura metody ---
+    def add_task(self, mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode, intro_file, output_path=None, subtitle_track_name="", movie_name=""):
         task = Task(
             mkv_file=Path(mkv_file) if mkv_file else None,
             subtitle_file=Path(subtitle_file) if subtitle_file else None,
@@ -128,10 +147,13 @@ class TaskManager:
             gpu_bitrate=gpu_bitrate,
             debug_mode=debug_mode,
             intro_file=Path(intro_file) if intro_file else None,
-            output_path=Path(output_path) if output_path else None
+            output_path=Path(output_path) if output_path else None,
+            subtitle_track_name=subtitle_track_name,
+            movie_name=movie_name
         )
         self.tasks.append(task)
         self.update_list_widget()
+    # ----------------------------------------------------
 
     def remove_task(self, index: int):
         if 0 <= index < len(self.tasks):

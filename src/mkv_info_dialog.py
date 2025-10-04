@@ -1,6 +1,5 @@
 import json
 import subprocess
-from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QApplication)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
@@ -77,7 +76,7 @@ class MkvInfoWorker(QThread):
                         num, den = map(int, fps_raw.split('/'))
                         fps = num / den if den > 0 else 0
                         fps_str = f"{fps:.3f} FPS ({fps_raw})"
-                    except:
+                    except Exception:
                         fps_str = fps_raw
 
                     # --- POPRAWKA: DODANO BITRATE WIDEO ---

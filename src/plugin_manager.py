@@ -1,4 +1,3 @@
-import os
 import sys
 import json
 import base64 # <-- NOWY IMPORT
@@ -91,4 +90,4 @@ class PluginManager:
         """
         if process in self.processes:
             self.processes.remove(process)
-            print(f"Oczyszczono zakończony proces dodatku.") # Opcjonalny log
+            print("Oczyszczono zakończony proces dodatku.") # Opcjonalny log

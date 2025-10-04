@@ -94,7 +94,8 @@ class DiscordRPCManager:
                     time.sleep(15)
 
     def update_presence(self, presence, start_time):
-        if not self.task_manager: return
+        if not self.task_manager:
+            return
         is_processing = self.task_manager.process_manager.is_running()
         tasks = self.task_manager.tasks
         num_tasks = len(tasks)

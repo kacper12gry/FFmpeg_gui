@@ -33,7 +33,8 @@ class BatchImportLogic:
 
     def import_from_txt(self):
         file_path, _ = QFileDialog.getOpenFileName(self.parent, "Wybierz plik z zadaniami", "", "Text Files (*.txt);;All Files (*)")
-        if not file_path: return
+        if not file_path:
+            return
         try:
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
@@ -44,7 +45,8 @@ class BatchImportLogic:
         valid_tasks, ignorable_warnings, fatal_errors = [], [], []
         for i, line in enumerate(lines):
             line_num, line_content = i + 1, line.strip()
-            if not line_content or line_content.startswith('#'): continue
+            if not line_content or line_content.startswith('#'):
+                continue
             parts = [p.strip() for p in line_content.split(';')]
             while len(parts) < 8:
                 parts.append("")
@@ -67,7 +69,7 @@ class BatchImportLogic:
                 line_errors.append("Brak bitrate dla GPU.")
             if (script_type == 4 and bitrate <= 0):
                 line_errors.append("Brak bitrate dla skryptu 4.")
-            if not script_type in [1, 2, 3, 4]:
+            if script_type not in [1, 2, 3, 4]:
                  line_errors.append(f"Nieznany typ skryptu: {script_type}.")
             if not mkv_path_str:
                 line_errors.append("Brak ścieżki do pliku MKV.")
