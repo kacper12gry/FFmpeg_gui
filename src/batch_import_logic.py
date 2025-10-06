@@ -134,6 +134,8 @@ class ErrorSelectionDialog(QDialog):
             item.setData(Qt.ItemDataRole.UserRole, task_data)
         layout.addWidget(self.list_widget)
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        button_box.button(QDialogButtonBox.StandardButton.Ok).setText("OK")
+        button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Anuluj")
         button_box.accepted.connect(self.accept)
         button_box.rejected.connect(self.reject)
         layout.addWidget(button_box)

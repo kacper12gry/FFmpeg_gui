@@ -29,6 +29,8 @@ class PathsConfigDialog(QDialog):
         self.list_widget = QListWidget()
         main_layout.addWidget(self.list_widget)
         button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Close)
+        button_box.button(QDialogButtonBox.StandardButton.Save).setText("Zapisz")
+        button_box.button(QDialogButtonBox.StandardButton.Close).setText("Zamknij")
         button_box.accepted.connect(self.save_paths)
         button_box.rejected.connect(self.reject)
         main_layout.addWidget(button_box)

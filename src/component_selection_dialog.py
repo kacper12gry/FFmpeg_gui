@@ -12,9 +12,10 @@ from mkv_info_dialog import MkvInfoDialog
 from batch_import_logic import BatchImportLogic # --- ZMIANA 1: Dodany import
 
 class ComponentSelectionDialog(QDialog):
-    def __init__(self, use_per_option_paths=False, parent=None):
+    def __init__(self, use_per_option_paths=False, parent=None, is_flatpak=False):
         super().__init__(parent)
         self.use_per_option_paths = use_per_option_paths
+        self.is_flatpak = is_flatpak
         self.setStyleSheet(QApplication.instance().styleSheet())
         self.setWindowTitle("Wybierz Komponenty")
         self.setGeometry(100, 100, 650, 650)
@@ -172,22 +173,36 @@ class ComponentSelectionDialog(QDialog):
         ffmpeg_layout = QVBoxLayout(ffmpeg_group)
         self.ffmpeg_script_label = QLabel("Wybierz skrypt FFmpeg (dla opcji z FFmpeg):")
         self.script1_radio = QRadioButton("CPU (CRF)")
-        self.script2_radio = QRadioButton("GPU (Nvidia, Bitrate)")
+        self.script2_radio = QRadioButton("GPU (Nvidia CUDA)")
+        self.script3_radio = QRadioButton("GPU (Intel/AMD VA-API)")
         self.script1_radio.setChecked(True)
         self.script_button_group = QButtonGroup()
         self.script_button_group.addButton(self.script1_radio, 1)
         self.script_button_group.addButton(self.script2_radio, 2)
+        self.script_button_group.addButton(self.script3_radio, 3)
+
+        # Ukryj opcje GPU w trybie Flatpak
+        if self.is_flatpak:
+            self.script2_radio.setVisible(False)
+            self.script3_radio.setVisible(False)
+
         bitrate_layout = QHBoxLayout()
         self.bitrate_label = QLabel("Bitrate (Mbps):")
         self.bitrate_spinbox = QSpinBox()
         self.bitrate_spinbox.setRange(1, 100)
-        self.bitrate_spinbox.setValue(8)
+        default_bitrate = self.settings.value("processing/default_gpu_bitrate", 8, type=int)
+        self.bitrate_spinbox.setValue(default_bitrate)
         bitrate_layout.addWidget(self.bitrate_label)
         bitrate_layout.addWidget(self.bitrate_spinbox)
         ffmpeg_layout.addWidget(self.ffmpeg_script_label)
         ffmpeg_layout.addWidget(self.script1_radio)
         ffmpeg_layout.addWidget(self.script2_radio)
+        ffmpeg_layout.addWidget(self.script3_radio)
         ffmpeg_layout.addLayout(bitrate_layout)
+
+        self.encoder_warning_label = QLabel("")
+        self.encoder_warning_label.setStyleSheet("color: #E67E22; font-style: italic;")
+        ffmpeg_layout.addWidget(self.encoder_warning_label)
         advanced_tab_layout.addWidget(ffmpeg_group)
 
                 # --- NOWA SEKCJA DLA OPCJI REMUX ---
@@ -231,6 +246,8 @@ class ComponentSelectionDialog(QDialog):
         advanced_tab_layout.addWidget(other_group)
         advanced_tab_layout.addStretch()
         self.button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        self.button_box.button(QDialogButtonBox.StandardButton.Ok).setText("OK")
+        self.button_box.button(QDialogButtonBox.StandardButton.Cancel).setText("Anuluj")
         main_layout.addWidget(self.button_box)
 
     def _connect_signals(self):
@@ -286,11 +303,12 @@ class ComponentSelectionDialog(QDialog):
         self.suffix_group.setEnabled(use_custom_output)
         ffmpeg_encoder_id = self.script_button_group.checkedId()
         ffmpeg_encoder_options_enabled = selected_id in [1, 2, 4]
-        is_gpu_selected = ffmpeg_encoder_options_enabled and ffmpeg_encoder_id == 2
+        is_gpu_selected = ffmpeg_encoder_options_enabled and ffmpeg_encoder_id in [2, 3]
         bitrate_is_relevant = is_gpu_selected or needs_intro
         self.ffmpeg_script_label.setEnabled(ffmpeg_encoder_options_enabled)
         self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
         self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled)
+        self.script3_radio.setEnabled(ffmpeg_encoder_options_enabled)
         self.bitrate_label.setEnabled(bitrate_is_relevant)
         self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
         self.movie_name_edit.setDisabled(self.movie_name_checkbox.isChecked())
@@ -301,7 +319,20 @@ class ComponentSelectionDialog(QDialog):
             is_remux_relevant = selected_id in [2, 3] # Aktywne dla skryptów mkvmerge
             remux_group.setEnabled(is_remux_relevant)
         # ------------------------------------------
-        self.output_name_edit.setText(self._generate_default_output_name())
+        # Tylko aktualizuj domyślną nazwę, jeśli użytkownik NIE jest w trybie niestandardowym
+        if not self.custom_output_checkbox.isChecked():
+            self.output_name_edit.setText(self._generate_default_output_name())
+
+        # Logika ostrzeżeń o opcjach eksperymentalnych
+        warning_text = ""
+        if selected_id == 4 and ffmpeg_encoder_id in [2, 3]:
+            warning_text = "Opcja GPU dla skryptu z wstawką jest EKSPERYMENTALNA."
+        elif selected_id in [1, 2] and ffmpeg_encoder_id == 3:
+            warning_text = "Opcja VA-API dla tego skryptu jest EKSPERYMENTALNA."
+        
+        self.encoder_warning_label.setText(warning_text)
+        self.encoder_warning_label.setVisible(bool(warning_text))
+
         self._validate_inputs()
 
     def _generate_default_output_name(self):
@@ -419,6 +450,7 @@ class ComponentSelectionDialog(QDialog):
             self._set_last_used_directory(path)
             self.update_file_labels()
             self._validate_inputs()
+            self.update_ui_state()
 
     def select_intro_file(self):
         last_dir = self._get_last_used_directory()
@@ -428,6 +460,7 @@ class ComponentSelectionDialog(QDialog):
             self._set_last_used_directory(path)
             self.update_file_labels()
             self._validate_inputs()
+            self.update_ui_state()
 
     def select_subtitle_file(self):
         last_dir = self._get_last_used_directory()
@@ -437,6 +470,7 @@ class ComponentSelectionDialog(QDialog):
             self._set_last_used_directory(path)
             self.update_file_labels()
             self._validate_inputs()
+            self.update_ui_state()
 
     def select_font_folder(self):
         last_dir = self._get_last_used_directory()
@@ -446,6 +480,7 @@ class ComponentSelectionDialog(QDialog):
             self._set_last_used_folder(path)
             self.update_file_labels()
             self._validate_inputs()
+            self.update_ui_state()
 
     def _load_suffixes(self):
         self.suffix_combo.clear()

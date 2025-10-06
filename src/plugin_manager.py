@@ -76,10 +76,15 @@ class PluginManager:
 
         process = QProcess(self.parent)
 
-        # --- KLUCZOWA ZMIANA ---
+        # --- KLUCZOWA ZMIANA DLA PYINSTALLERA ---
+        # Ustawienie katalogu roboczego na folder, w którym jest .exe
+        # To pozwala procesowi potomnemu znaleźć wbudowanego Pythona.
+        if getattr(sys, 'frozen', False):
+            process.setWorkingDirectory(str(Path(sys.executable).parent))
+        # ----------------------------------------
+
         # Po zakończeniu procesu (normalnie lub przez błąd), uruchom metodę czyszczącą.
         process.finished.connect(lambda: self.cleanup_process(process))
-        # ---------------------
 
         process.start(sys.executable, args)
         self.processes.append(process)
