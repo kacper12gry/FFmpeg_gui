@@ -8,16 +8,17 @@ if platform.system() == "Windows":
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout,
     QWidget, QListWidget, QAbstractItemView, QMessageBox, QDialog,
-    QGroupBox, QSplitter, QStyleFactory, QLabel
+    QGroupBox, QSplitter, QStyleFactory, QLabel, QSystemTrayIcon, QCheckBox
 )
-from PyQt6.QtCore import QProcess, Qt, QSettings
-from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication
+from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices
 
 # Importy lokalnych modułów
 from process_manager import ProcessManager
 from component_selection_dialog import ComponentSelectionDialog
 from task_manager import TaskManager
 from theme_manager import get_dark_theme_qss, get_light_theme_qss, get_professional_light_theme_qss
+from version_checker import VersionChecker
 
 from discord_rpc_manager import DiscordRPCManager
 from plugin_manager import PluginManager
@@ -48,9 +49,48 @@ class MainWindow(QMainWindow):
         self.task_manager.process_manager = self.process_manager
         self.rpc_manager.task_manager = self.task_manager
         self.process_manager.eta_updated.connect(self.update_eta_display)
+        self.tray_icon = QSystemTrayIcon(QIcon("icon/icon.svg"), self)
+        self.process_manager.queue_finished.connect(self.show_queue_finished_notification)
 
         self.create_menu_bar()
         self.load_settings()
+        self.check_for_updates()
+
+    def check_for_updates(self):
+        if self.settings.value("update_check/enabled", True, type=bool):
+            self.version_checker = VersionChecker(self)
+            self.version_checker.check_complete.connect(self.handle_version_check_result)
+            # Opcjonalnie: obsługa błędów
+            # self.version_checker.error_occurred.connect(lambda e: print(f"Update check error: {e}"))
+            self.version_checker.start()
+
+    def handle_version_check_result(self, latest_version, release_url):
+        ignored_versions = self.settings.value("update_check/ignored", [], type=str)
+
+        # Proste porównanie - zakładamy, że tagi są różne
+        if latest_version != self.app_version and latest_version not in ignored_versions:
+            msg_box = QMessageBox(self)
+            msg_box.setWindowTitle("Dostępna nowa wersja!")
+            msg_box.setTextFormat(Qt.TextFormat.RichText)
+            msg_box.setText(
+                f"Dostępna jest nowa wersja programu: <b>{latest_version}</b><br><br>"
+                f"Czy chcesz otworzyć stronę pobierania?"
+                f"<br><a href=\"{release_url}\">{release_url}</a>"
+            )
+            msg_box.setIcon(QMessageBox.Icon.Information)
+            
+            msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+            msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+
+            checkbox = QCheckBox("Nie pokazuj ponownie dla tej wersji")
+            msg_box.setCheckBox(checkbox)
+
+            if msg_box.exec() == QMessageBox.StandardButton.Yes:
+                QDesktopServices.openUrl(QUrl(release_url))
+
+            if checkbox.isChecked():
+                ignored_versions.append(latest_version)
+                self.settings.setValue("update_check/ignored", ignored_versions)
 
     def setup_ui(self):
         self.button = QPushButton("Otwórz okno wyboru komponentów", self)
@@ -287,17 +327,32 @@ class MainWindow(QMainWindow):
         msg_box.setIcon(QMessageBox.Icon.Question)
         msg_box.setWindowTitle("Potwierdzenie")
         msg_box.setText(f"Czy na pewno chcesz {'przerwać aktywne' if is_active else 'usunąć'} zadanie?")
-        yes_button = msg_box.addButton("Tak", QMessageBox.ButtonRole.YesRole)
+        msg_box.addButton("Tak", QMessageBox.ButtonRole.YesRole)
         no_button = msg_box.addButton("Nie", QMessageBox.ButtonRole.NoRole)
         msg_box.setDefaultButton(no_button)
         msg_box.exec()
 
-        if msg_box.clickedButton() == yes_button:
-            self.task_manager.remove_task(selected_row)
+        if msg_box.clickedButton() == no_button:
+            return
+
+        self.task_manager.remove_task(selected_row)
         if is_active:
             self.process_manager.kill_process_and_advance()
         elif not self.process_manager.is_running():
             self.process_manager.process_next_task()
+
+    def show_queue_finished_notification(self):
+        self.tray_icon.show()
+        self.tray_icon.showMessage(
+            "Automatyzer - Zakończono",
+            "Wszystkie zadania w kolejce zostały ukończone.",
+            QSystemTrayIcon.MessageIcon.Information,
+            5000 # Czas wyświetlania w milisekundach
+        )
+        # Użyj timera, aby ukryć ikonę po chwili
+        QTimer.singleShot(6000, self.tray_icon.hide)
+
+
 
 
 

@@ -3,9 +3,57 @@ import shutil
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QWidget, QGroupBox, 
                              QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox, 
                              QCheckBox, QDialogButtonBox, QFileDialog, QComboBox, QHBoxLayout,
-                             QGridLayout, QFrame, QMessageBox)
-from PyQt6.QtGui import QIcon
-from PyQt6.QtCore import QSettings, Qt, QProcess
+                             QMessageBox, QSplitter, QListWidget, QTextEdit, QListWidgetItem)
+from PyQt6.QtGui import QIcon, QPixmap
+import urllib.request
+from PyQt6.QtCore import QSettings, Qt, QProcess, QEvent, QThread, pyqtSignal
+
+# --- Nowa klasa do pobierania obrazka w tle ---
+class ImageDownloader(QThread):
+    image_ready = pyqtSignal(bytes)
+    error_occurred = pyqtSignal(str)
+
+    def __init__(self, url, parent=None):
+        super().__init__(parent)
+        self.url = url
+
+    def run(self):
+        try:
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'}
+            req = urllib.request.Request(self.url, headers=headers)
+            with urllib.request.urlopen(req) as response:
+                image_data = response.read()
+                self.image_ready.emit(image_data)
+        except Exception as e:
+            self.error_occurred.emit(str(e))
+
+# --- Nowe okno do wyświetlania Easter Egga ---
+class EasterEggDialog(QDialog):
+    def __init__(self, image_data, signature_text, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Niespodzianka!")
+        
+        layout = QVBoxLayout(self)
+        
+        # Obrazek
+        image_label = QLabel()
+        pixmap = QPixmap()
+        pixmap.loadFromData(image_data)
+        image_label.setPixmap(pixmap.scaled(512, 512, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        layout.addWidget(image_label)
+
+        # Podpis
+        signature_label = QLabel(signature_text)
+        signature_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        signature_label.setStyleSheet("font-style: italic; margin-top: 10px;")
+        layout.addWidget(signature_label)
+
+        # Przycisk zamknięcia
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        button_box.button(QDialogButtonBox.StandardButton.Close).setText("Zamknij")
+        button_box.rejected.connect(self.reject)
+        layout.addWidget(button_box)
 
 class SettingsWindow(QDialog):
     def __init__(self, settings: QSettings, plugin_manager, output_window, parent=None, version="N/A", is_flatpak=False):
@@ -17,6 +65,8 @@ class SettingsWindow(QDialog):
         self.is_windows = platform.system() == "Windows"
         self.app_version = version
         self.is_flatpak = is_flatpak
+        self.click_counter = 0
+        self.image_worker = None # Do przechowywania referencji do wątku
         self.setWindowTitle("Ustawienia Programu")
         self.setMinimumWidth(650)
 
@@ -134,13 +184,14 @@ class SettingsWindow(QDialog):
         top_layout.setSpacing(10)
 
         # --- Top Section: Icon + Header ---
-        icon_label = QLabel()
+        self.icon_label = QLabel()
         icon = QIcon("icon/icon.svg")
         pixmap = icon.pixmap(96, 96)
-        icon_label.setPixmap(pixmap)
-        icon_label.setFixedWidth(100)
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        top_layout.addWidget(icon_label)
+        self.icon_label.setPixmap(pixmap)
+        self.icon_label.setFixedWidth(100)
+        self.icon_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.icon_label.installEventFilter(self) # Instalacja filtra
+        top_layout.addWidget(self.icon_label)
 
         top_text_label = QLabel()
         top_text_label.setTextFormat(Qt.TextFormat.RichText)
@@ -261,70 +312,97 @@ class SettingsWindow(QDialog):
 
     def _create_diagnostics_tab(self):
         layout = QVBoxLayout(self.diagnostics_tab)
-        grid_layout = QGridLayout()
-        
-        # Dependency checks
-        results = self.check_dependencies()
+
+        # --- Sekcja Zależności ---
+        dependencies_group = QGroupBox("Główne zależności")
+        form_layout = QFormLayout(dependencies_group)
+        form_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form_layout.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
         dependencies = {
-            "ffmpeg": ("FFmpeg",),
-            "mkvmerge": ("MKVToolNix",),
-            "ffprobe": ("FFprobe",),
+            "ffmpeg": "FFmpeg:",
+            "mkvmerge": "MKVToolNix:",
+            "ffprobe": "FFprobe:",
         }
-        row = 0
-        for key, (name,) in dependencies.items():
-            label = QLabel(f"{name}:")
+
+        for key, label_text in dependencies.items():
+            path = shutil.which(key)
+            
+            h_layout = QHBoxLayout()
             status_label = QLabel()
-            install_button = QPushButton("Instaluj")
-            if results[key]:
-                status_label.setText("✅ Znaleziono")
-                status_label.setStyleSheet("color: #4CAF50;") # Zielony
-                install_button.setVisible(False)
+            path_edit = QLineEdit()
+            path_edit.setReadOnly(True)
+
+            if path:
+                status_label.setText("✅")
+                status_label.setToolTip("Znaleziono")
+                path_edit.setText(path)
             else:
-                status_label.setText("❌ Nie znaleziono")
-                status_label.setStyleSheet("color: #F44336;") # Czerwony
-                install_button.setVisible(self.is_windows)
+                status_label.setText("❌")
+                status_label.setToolTip("Nie znaleziono")
+                path_edit.setPlaceholderText("Brak programu w ścieżce systemowej (PATH)")
+            
+            h_layout.addWidget(status_label)
+            h_layout.addWidget(path_edit)
 
-            if key == "ffmpeg":
-                install_button.clicked.connect(self.install_ffmpeg_winget)
-            elif key == "mkvmerge":
-                install_button.clicked.connect(self.show_mkvtoolnix_instructions)
-            elif key == "ffprobe":
-                install_button.setVisible(False)
+            if self.is_windows and not path:
+                install_button = QPushButton("Instaluj")
+                if key == "ffmpeg":
+                    install_button.clicked.connect(self.install_ffmpeg_winget)
+                elif key == "mkvmerge":
+                    install_button.clicked.connect(self.show_mkvtoolnix_instructions)
+                else:
+                    install_button.setVisible(False)
+                h_layout.addWidget(install_button)
 
-            grid_layout.addWidget(label, row, 0)
-            grid_layout.addWidget(status_label, row, 1)
-            grid_layout.addWidget(install_button, row, 2)
-            row += 1
-        
-        layout.addLayout(grid_layout)
+            form_layout.addRow(label_text, h_layout)
 
-        # DLC checks
+        layout.addWidget(dependencies_group)
+
+        # --- Sekcja Dodatków (DLC) ---
         plugins = self.plugin_manager.get_plugins()
         if plugins:
-            separator = QFrame()
-            separator.setFrameShape(QFrame.Shape.HLine)
-            separator.setFrameShadow(QFrame.Shadow.Sunken)
-            grid_layout.addWidget(separator, grid_layout.rowCount(), 0, 1, 3)
+            plugins_group = QGroupBox("Wykryte dodatki (DLC)")
+            plugins_layout = QVBoxLayout(plugins_group)
+            
+            splitter = QSplitter(Qt.Orientation.Horizontal)
 
-            dlc_header_label = QLabel("Wykryte Dodatki (DLC):")
-            dlc_header_label.setStyleSheet("font-weight: bold; margin-top: 10px;")
-            grid_layout.addWidget(dlc_header_label, grid_layout.rowCount(), 0, 1, 3)
-
+            self.plugin_list = QListWidget()
             for plugin in plugins:
-                row = grid_layout.rowCount()
-                name_label = QLabel(plugin['name'])
-                tooltip_text = (f"Autor: {plugin['author']}\n"
-                                f"Wersja: {plugin['version']}\n"
-                                f"Opis: {plugin['description']}")
-                name_label.setToolTip(tooltip_text)
+                item = QListWidgetItem(plugin['name'])
+                item.setData(Qt.ItemDataRole.UserRole, plugin)
+                self.plugin_list.addItem(item)
+            
+            self.plugin_details = QTextEdit()
+            self.plugin_details.setReadOnly(True)
 
-                status_label = QLabel("✅ Wykryto")
-                status_label.setStyleSheet("color: #4CAF50;")
+            splitter.addWidget(self.plugin_list)
+            splitter.addWidget(self.plugin_details)
+            splitter.setSizes([200, 400])
 
-                grid_layout.addWidget(name_label, row, 0)
-                grid_layout.addWidget(status_label, row, 1)
-        
+            self.plugin_list.currentItemChanged.connect(self._update_plugin_details)
+            if self.plugin_list.count() > 0:
+                self.plugin_list.setCurrentRow(0)
+
+            plugins_layout.addWidget(splitter)
+            layout.addWidget(plugins_group)
+
         layout.addStretch()
+
+    def _update_plugin_details(self, current, previous):
+        if not current:
+            self.plugin_details.clear()
+            return
+
+        plugin_data = current.data(Qt.ItemDataRole.UserRole)
+        details_html = f"""
+            <h3>{plugin_data.get('name', 'Brak nazwy')}</h3>
+            <p><b>Autor:</b> {plugin_data.get('author', 'Brak danych')}</p>
+            <p><b>Wersja:</b> {plugin_data.get('version', 'Brak danych')}</p>
+            <hr>
+            <p>{plugin_data.get('description', 'Brak opisu.')}</p>
+        """
+        self.plugin_details.setHtml(details_html)
 
     # --- Methods from DiagnosticDialog ---
     def check_dependencies(self):
@@ -390,3 +468,30 @@ class SettingsWindow(QDialog):
     def accept(self):
         self.save_settings()
         super().accept()
+
+    def eventFilter(self, obj, event):
+        if obj is self.icon_label and event.type() == QEvent.Type.MouseButtonPress:
+            self.click_counter += 1
+            if self.click_counter >= 3:
+                self.show_easter_egg()
+                self.click_counter = 0 # Reset licznika
+        return super().eventFilter(obj, event)
+
+    def show_easter_egg(self):
+        if self.image_worker and self.image_worker.isRunning():
+            return # Już pobiera
+
+        url = "https://media.discordapp.net/attachments/715984180755824662/1426229024312655912/1140298.jpg?ex=68ea76c9&is=68e92549&hm=0ac222a217b02b502a39a49d5aed6783daa612392308295adc8eae3125cfeef0&=&format=webp&width=916&height=648"
+        
+        self.image_worker = ImageDownloader(url, self)
+        self.image_worker.image_ready.connect(self.display_easter_egg)
+        self.image_worker.error_occurred.connect(self.on_image_download_error)
+        self.image_worker.start()
+
+    def display_easter_egg(self, image_data):
+        signature = "Mayano Top Gun (Uma Musume: Pretty Derby)"
+        dialog = EasterEggDialog(image_data, signature, self)
+        dialog.exec()
+
+    def on_image_download_error(self, error_string):
+        QMessageBox.warning(self, "Błąd pobierania", f"Nie udało się pobrać obrazka:\n{error_string}")

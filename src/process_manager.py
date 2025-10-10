@@ -10,13 +10,15 @@ import subprocess
 class ProcessManager(QObject):
     eta_updated = pyqtSignal(int)
     log_message = pyqtSignal(str)
+    queue_finished = pyqtSignal()
+
     def __init__(self, task_manager, output_window, rpc_manager, debug_mode=False):
         super().__init__()
         self.task_manager = task_manager
         self.output_window = output_window
         self.rpc_manager = rpc_manager
         self.process = None
-        self.debug_mode = debug_mode
+        self.debug_mode = False # Domyślnie, ustawiane per zadanie
         self.log_file_path = os.path.join(os.path.expanduser("~"), "Desktop", "debug_log.txt")
         self.current_task = None
         self.is_windows = platform.system() == "Windows"
@@ -105,6 +107,7 @@ class ProcessManager(QObject):
         self.total_duration_seconds = self._get_video_duration(self.current_task.mkv_file)
         self.start_time = datetime.now()
         self.task_manager.mark_current_as_processing("Przygotowywanie...")
+
         script_map = {
             1: lambda task: self.run_ffmpeg(task.mkv_file),
             2: lambda task: self.run_mkvmerge_ffmpeg(task.mkv_file, task.subtitle_file, task.font_folder),
@@ -139,7 +142,12 @@ class ProcessManager(QObject):
             self.task_manager.complete_current_task()
         self.current_task = None
         self.process = None
-        self.process_next_task()
+        
+        # Sprawdź, czy są kolejne zadania, jeśli nie, zakończono kolejkę
+        if not self.task_manager.has_tasks():
+            self.queue_finished.emit()
+        else:
+            self.process_next_task()
 
     def kill_process(self):
         self.eta_updated.emit(-1)
@@ -154,6 +162,8 @@ class ProcessManager(QObject):
     def kill_process_and_advance(self):
         self.kill_process()
         self.process_next_task()
+
+
 
     def run_mkvmerge(self, mkv_file, subtitle_file, font_folder):
         mkv_path, _, font_path = Path(mkv_file), Path(subtitle_file), Path(font_folder)
@@ -278,9 +288,7 @@ class ProcessManager(QObject):
 
         audio_filter = "[0:a:0]loudnorm=I=-20:LRA=10:tp=-1.8[a_intro_norm];[1:a:0]loudnorm=I=-20:LRA=10:tp=-1.8[a_main_norm];[a_intro_norm][a_main_norm]concat=n=2:v=0:a=1[a_out]"
 
-        args = [] # Initialize args
-        self.log_terminal("Constructing args...")
-
+        # Skrypt dla CPU
         if self.current_task.selected_ffmpeg_script == 1:
             self.log_terminal("Using CPU path for intro script.")
             filter_complex_cpu = (
@@ -305,6 +313,7 @@ class ProcessManager(QObject):
                 "-pix_fmt", "yuv420p", "-sn", "-movflags", "faststart", "-y", str(output_file)
             ]
 
+        # Skrypty dla GPU (CUDA lub VA-API)
         elif self.current_task.selected_ffmpeg_script in [2, 3]:
             self.log_terminal("Using GPU path for intro script.")
             video_filter_cpu = f"[1:v]subtitles='{subtitle_path}'[v_subs];[0:v][v_subs]concat=n=2:v=1:a=0[v_cpu]"

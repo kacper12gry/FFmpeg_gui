@@ -1,22 +1,23 @@
 # component_selection_dialog.py (Wersja finalna: stary, stabilny kod + moduł importu)
 
 import os
+import platform
 from pathlib import Path
-from PyQt6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog,
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog,
                              QRadioButton, QButtonGroup, QSpinBox, QCheckBox,
                              QDialogButtonBox, QMessageBox, QHBoxLayout, QLineEdit,
                              QToolButton, QStyle, QTabWidget, QWidget, QGroupBox,
                              QComboBox)
 from PyQt6.QtCore import Qt, QSettings
 from mkv_info_dialog import MkvInfoDialog
-from batch_import_logic import BatchImportLogic # --- ZMIANA 1: Dodany import
+from batch_import_logic import BatchImportLogic
 
 class ComponentSelectionDialog(QDialog):
     def __init__(self, use_per_option_paths=False, parent=None, is_flatpak=False):
         super().__init__(parent)
         self.use_per_option_paths = use_per_option_paths
         self.is_flatpak = is_flatpak
-        self.setStyleSheet(QApplication.instance().styleSheet())
+        self.is_windows = platform.system() == "Windows"
         self.setWindowTitle("Wybierz Komponenty")
         self.setGeometry(100, 100, 650, 650)
         self.setAcceptDrops(True)
@@ -181,11 +182,6 @@ class ComponentSelectionDialog(QDialog):
         self.script_button_group.addButton(self.script2_radio, 2)
         self.script_button_group.addButton(self.script3_radio, 3)
 
-        # Ukryj opcje GPU w trybie Flatpak
-        if self.is_flatpak:
-            self.script2_radio.setVisible(False)
-            self.script3_radio.setVisible(False)
-
         bitrate_layout = QHBoxLayout()
         self.bitrate_label = QLabel("Bitrate (Mbps):")
         self.bitrate_spinbox = QSpinBox()
@@ -306,11 +302,15 @@ class ComponentSelectionDialog(QDialog):
         is_gpu_selected = ffmpeg_encoder_options_enabled and ffmpeg_encoder_id in [2, 3]
         bitrate_is_relevant = is_gpu_selected or needs_intro
         self.ffmpeg_script_label.setEnabled(ffmpeg_encoder_options_enabled)
-        self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
-        self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled)
-        self.script3_radio.setEnabled(ffmpeg_encoder_options_enabled)
         self.bitrate_label.setEnabled(bitrate_is_relevant)
         self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
+
+        # Scentralizowana logika widoczności i stanu przycisków enkodera
+        self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
+        self.script2_radio.setVisible(not self.is_flatpak)
+        self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak)
+        self.script3_radio.setVisible(not self.is_flatpak and not self.is_windows)
+        self.script3_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak and not self.is_windows)
         self.movie_name_edit.setDisabled(self.movie_name_checkbox.isChecked())
                 # --- DODANA LOGIKA DLA NOWEGO POLA ---
         # Znajdź grupę remux (jeśli istnieje) i ustaw jej widoczność
