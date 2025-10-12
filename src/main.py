@@ -79,13 +79,16 @@ class MainWindow(QMainWindow):
             )
             msg_box.setIcon(QMessageBox.Icon.Information)
             
-            msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-            msg_box.setDefaultButton(QMessageBox.StandardButton.Yes)
+            yes_button = msg_box.addButton("Tak", QMessageBox.ButtonRole.YesRole)
+            msg_box.addButton("Nie", QMessageBox.ButtonRole.NoRole)
+            msg_box.setDefaultButton(yes_button)
 
             checkbox = QCheckBox("Nie pokazuj ponownie dla tej wersji")
             msg_box.setCheckBox(checkbox)
 
-            if msg_box.exec() == QMessageBox.StandardButton.Yes:
+            msg_box.exec()
+
+            if msg_box.clickedButton() == yes_button:
                 QDesktopServices.openUrl(QUrl(release_url))
 
             if checkbox.isChecked():

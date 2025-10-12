@@ -245,7 +245,7 @@ class SettingsWindow(QDialog):
         path_edit = QLineEdit()
         browse_button = QPushButton("Przeglądaj...")
         
-        widget = QWidget()
+        widget = QWidget(self)
         hbox = QHBoxLayout(widget)
         hbox.setContentsMargins(0,0,0,0)
         hbox.addWidget(path_edit)
@@ -481,7 +481,7 @@ class SettingsWindow(QDialog):
         if self.image_worker and self.image_worker.isRunning():
             return # Już pobiera
 
-        url = "https://media.discordapp.net/attachments/715984180755824662/1426229024312655912/1140298.jpg?ex=68ea76c9&is=68e92549&hm=0ac222a217b02b502a39a49d5aed6783daa612392308295adc8eae3125cfeef0&=&format=webp&width=916&height=648"
+        url = "https://media.discordapp.net/attachments/715984180755824662/1426229024312655912/1140298.jpg?ex=68ed19c9&is=68ebc849&hm=d1dba04faa512f0c4d80b35f399da00de7799e6bbf2bbc8e77711b32c3a1dc32&=&format=webp&width=916&height=648"
         
         self.image_worker = ImageDownloader(url, self)
         self.image_worker.image_ready.connect(self.display_easter_egg)
