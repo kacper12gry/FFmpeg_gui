@@ -1,4 +1,4 @@
-# component_selection_dialog.py (Wersja finalna: stary, stabilny kod + moduł importu)
+# # component_selection_dialog.py (Wersja finalna: stary, stabilny kod + moduł importu)
 
 import os
 import platform
@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QFileDia
                              QRadioButton, QButtonGroup, QSpinBox, QCheckBox,
                              QDialogButtonBox, QMessageBox, QHBoxLayout, QLineEdit,
                              QToolButton, QStyle, QTabWidget, QWidget, QGroupBox,
-                             QComboBox)
+                             QComboBox, QInputDialog)
 from PyQt6.QtCore import Qt, QSettings
 from mkv_info_dialog import MkvInfoDialog
 from batch_import_logic import BatchImportLogic
@@ -35,6 +35,7 @@ class ComponentSelectionDialog(QDialog):
         self.update_ui_state()
         self._load_suffixes()
         self._apply_initial_paths()
+        self._load_presets()
 
     def _apply_initial_paths(self):
 
@@ -72,6 +73,21 @@ class ComponentSelectionDialog(QDialog):
         self.main_tab = QWidget()
         self.tabs.addTab(self.main_tab, "Pliki i Skrypty")
         main_tab_layout = QVBoxLayout(self.main_tab)
+
+        # --- NOWA SEKCJA: PRESETY ---
+        preset_group = QGroupBox("Presety")
+        preset_layout = QHBoxLayout(preset_group)
+        self.preset_combo = QComboBox()
+        self.preset_combo.setPlaceholderText("Wybierz lub zapisz preset...")
+        self.save_preset_button = QPushButton("Zapisz")
+        self.delete_preset_button = QPushButton("Usuń")
+        preset_layout.addWidget(QLabel("Zarządzaj presetami:"))
+        preset_layout.addWidget(self.preset_combo, 1)
+        preset_layout.addWidget(self.save_preset_button)
+        preset_layout.addWidget(self.delete_preset_button)
+        main_tab_layout.addWidget(preset_group)
+        # -----------------------------
+
         input_group = QGroupBox("Pliki wejściowe (przeciągnij i upuść na okno)")
         input_layout = QVBoxLayout(input_group)
         self.mkv_label = QLabel("Plik MKV: Nie wybrano")
@@ -256,8 +272,7 @@ class ComponentSelectionDialog(QDialog):
         self.button_group.buttonClicked.connect(self._on_script_option_changed)
         self.script_button_group.buttonClicked.connect(self.update_ui_state)
 
-        # --- ZMIANA 3: Podłączenie do nowego modułu ---
-        self.import_button.clicked.connect(self.batch_import_handler.import_from_txt)
+        self.import_button.clicked.connect(self._handle_batch_import) # ZMIANA
         self.help_button.clicked.connect(self.batch_import_handler.show_import_help_dialog)
 
         self.button_box.accepted.connect(self.accept)
@@ -269,6 +284,18 @@ class ComponentSelectionDialog(QDialog):
         self.add_suffix_button.clicked.connect(self._add_custom_suffix)
         self.remove_suffix_button.clicked.connect(self._remove_selected_suffix)
         self.movie_name_checkbox.toggled.connect(self.update_ui_state)
+
+        # Sygnały dla presetów
+        self.save_preset_button.clicked.connect(self._save_preset)
+        self.delete_preset_button.clicked.connect(self._delete_preset)
+        self.preset_combo.currentIndexChanged.connect(self._apply_preset)
+
+    def _handle_batch_import(self):
+        """Obsługuje logikę importu wsadowego i zamykania okna."""
+        tasks = self.batch_import_handler.import_from_txt()
+        if tasks is not None:
+            self.batch_tasks = tasks
+            self.accept() # Zamknij to okno, aby MainWindow mogło przetworzyć zadania
 
     def show_mkv_info_dialog(self):
         if self.mkv_file:
@@ -358,9 +385,33 @@ class ComponentSelectionDialog(QDialog):
         self._load_suffixes()
 
     def select_output_directory(self):
-        path = QFileDialog.getExistingDirectory(self, "Wybierz folder docelowy")
-        if path:
-            self.output_dir_edit.setText(path)
+        start_dir = self.output_dir_edit.text() or self._get_last_used_directory()
+        default_name = self.output_name_edit.text() or self._generate_default_output_name()
+
+        # Upewnij się, że default_name nie jest pusty, jeśli mkv_file nie jest jeszcze wybrany
+        if not default_name and self.mkv_file:
+            default_name = self._generate_default_output_name()
+
+        default_path = os.path.join(start_dir, default_name)
+
+        script_id = self.button_group.checkedId()
+        if script_id in [1, 4]:
+            file_filter = "MP4 Video (*.mp4);;All Files (*)"
+        else:  # Scripts 2 and 3
+            file_filter = "Matroska Video (*.mkv);;All Files (*)"
+
+        full_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Zapisz plik jako...",
+            default_path,
+            file_filter
+        )
+
+        if full_path:
+            p = Path(full_path)
+            self.output_dir_edit.setText(str(p.parent))
+            self.output_name_edit.setText(p.name)
+            self._set_last_used_directory(str(p.parent))
 
     def accept(self):
         # Jeśli zadania pochodzą z importu pliku, natychmiast zamknij okno.
@@ -534,6 +585,80 @@ class ComponentSelectionDialog(QDialog):
             self.suffix_combo.removeItem(current_index)
             self._save_suffixes()
             QMessageBox.information(self, "Sukces", "Usunięto wybraną końcówkę.")
+
+    # --- METODY OBSŁUGI PRESETÓW ---
+    def _load_presets(self):
+        self.preset_combo.blockSignals(True)
+        self.preset_combo.clear()
+        self.settings.beginGroup("presets")
+        preset_names = self.settings.childGroups()
+        self.preset_combo.addItems(preset_names)
+        self.settings.endGroup()
+        self.preset_combo.setCurrentIndex(-1) # Brak wyboru na starcie
+        self.preset_combo.blockSignals(False)
+
+    def _save_preset(self):
+        preset_name, ok = QInputDialog.getText(self, "Zapisz Preset", "Wprowadź nazwę dla presetu:")
+        if not ok or not preset_name.strip():
+            return
+
+        preset_name = preset_name.strip()
+        self.settings.beginGroup(f"presets/{preset_name}")
+        # Zapisz wszystkie istotne ustawienia
+        self.settings.setValue("selected_script", self.button_group.checkedId())
+        self.settings.setValue("selected_ffmpeg_script", self.script_button_group.checkedId())
+        self.settings.setValue("gpu_bitrate", self.bitrate_spinbox.value())
+        self.settings.setValue("debug_mode", self.debug_checkbox.isChecked())
+        self.settings.setValue("subtitle_track_name", self.subtitle_track_name_edit.text())
+        self.settings.setValue("movie_name", self.movie_name_edit.text())
+        self.settings.setValue("keep_movie_name", self.movie_name_checkbox.isChecked())
+        self.settings.setValue("custom_output", self.custom_output_checkbox.isChecked())
+        self.settings.endGroup()
+
+        QMessageBox.information(self, "Sukces", f"Preset '{preset_name}' został zapisany.")
+        self._load_presets() # Odśwież listę
+
+    def _delete_preset(self):
+        preset_name = self.preset_combo.currentText()
+        if not preset_name:
+            QMessageBox.warning(self, "Błąd", "Nie wybrano presetu do usunięcia.")
+            return
+
+        reply = QMessageBox.question(self, "Potwierdzenie", 
+                                     f"Czy na pewno chcesz usunąć preset '{preset_name}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            self.settings.beginGroup("presets")
+            self.settings.remove(preset_name)
+            self.settings.endGroup()
+            self._load_presets()
+            QMessageBox.information(self, "Sukces", f"Usunięto preset '{preset_name}'.")
+
+    def _apply_preset(self, index):
+        if index == -1: # Ignoruj placeholder
+            return
+
+        preset_name = self.preset_combo.itemText(index)
+        self.settings.beginGroup(f"presets/{preset_name}")
+
+        # Odczytaj i zastosuj ustawienia
+        script_id = self.settings.value("selected_script", 3, type=int)
+        self.button_group.button(script_id).setChecked(True)
+
+        ffmpeg_script_id = self.settings.value("selected_ffmpeg_script", 1, type=int)
+        self.script_button_group.button(ffmpeg_script_id).setChecked(True)
+
+        self.bitrate_spinbox.setValue(self.settings.value("gpu_bitrate", 8, type=int))
+        self.debug_checkbox.setChecked(self.settings.value("debug_mode", False, type=bool))
+        self.subtitle_track_name_edit.setText(self.settings.value("subtitle_track_name", ""))
+        self.movie_name_edit.setText(self.settings.value("movie_name", ""))
+        self.movie_name_checkbox.setChecked(self.settings.value("keep_movie_name", False, type=bool))
+        self.custom_output_checkbox.setChecked(self.settings.value("custom_output", False, type=bool))
+        self.output_dir_edit.setText(self.settings.value("output_dir", ""))
+
+        self.settings.endGroup()
+        self.update_ui_state() # Zaktualizuj UI po wczytaniu presetu
 
     @property
     def selected_script(self): return self.button_group.checkedId()

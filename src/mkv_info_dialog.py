@@ -1,6 +1,6 @@
 import json
 import subprocess
-from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QApplication)
+from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QApplication, QScrollArea)
 from PyQt6.QtCore import Qt, QThread, pyqtSignal
 
 class MkvInfoWorker(QThread):
@@ -101,15 +101,23 @@ class MkvInfoDialog(QDialog):
         self.mkv_file_path = mkv_file_path
 
         self.setWindowTitle("Informacje o pliku")
-        self.setMinimumSize(500, 400)
+        self.resize(550, 400) # Ustawienie domyślnego, ale elastycznego rozmiaru
         self.setStyleSheet(QApplication.instance().styleSheet())
 
         layout = QVBoxLayout(self)
 
+        # Etykieta z informacjami
         self.info_label = QLabel("Wczytywanie informacji...")
         self.info_label.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.info_label.setWordWrap(True)
-        layout.addWidget(self.info_label)
+        self.info_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        # Panel przewijania
+        scroll_area = QScrollArea(self)
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidget(self.info_label)
+        scroll_area.setStyleSheet("background: transparent; border: none;") # Dopasowanie do tła
+        layout.addWidget(scroll_area)
 
         close_button = QPushButton("Zamknij")
         close_button.clicked.connect(self.accept)

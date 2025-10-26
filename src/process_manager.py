@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 from datetime import datetime
-from PyQt6.QtCore import QObject, QProcess, pyqtSignal
+from PyQt6.QtCore import QObject, QProcess, pyqtSignal, QStandardPaths
 import platform
 import subprocess
 
@@ -19,7 +19,8 @@ class ProcessManager(QObject):
         self.rpc_manager = rpc_manager
         self.process = None
         self.debug_mode = False # Domyślnie, ustawiane per zadanie
-        self.log_file_path = os.path.join(os.path.expanduser("~"), "Desktop", "debug_log.txt")
+        log_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
+        self.log_file_path = os.path.join(log_dir, "debug_log.txt")
         self.current_task = None
         self.is_windows = platform.system() == "Windows"
         self.chained_command_info = None
@@ -96,10 +97,6 @@ class ProcessManager(QObject):
 
         self.debug_mode = self.current_task.debug_mode
         self.log_terminal("process_next_task called.")
-
-        if not self.task_manager.has_tasks() or self.is_running():
-            self.log_terminal("No tasks to process or a process is already running.")
-            return
 
         self.log_terminal(f"Current task script ID: {self.current_task.selected_script}")
         self.log_terminal(f"Current task encoder ID: {self.current_task.selected_ffmpeg_script}")

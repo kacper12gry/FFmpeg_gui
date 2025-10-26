@@ -1,2 +1,2 @@
-__version__ = "5.0"
-latest_release_tag = "v5.0"
+__version__ = "5.1"
+latest_release_tag = "v5.1"

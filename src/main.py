@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QGroupBox, QSplitter, QStyleFactory, QLabel, QSystemTrayIcon, QCheckBox
 )
 from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl
-from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices, QPalette, QColor
 
 # Importy lokalnych modułów
 from process_manager import ProcessManager
@@ -23,8 +23,35 @@ from version_checker import VersionChecker
 from discord_rpc_manager import DiscordRPCManager
 from plugin_manager import PluginManager
 from settings_window import SettingsWindow
+from task_summary_dialog import TaskSummaryDialog
 
-from _version import __version__
+from _version import __version__, latest_release_tag
+
+def set_windows_titlebar_color(hwnd, color_mode):
+    """Ustawia kolor paska tytułu dla okna w systemie Windows 10/11."""
+    if platform.system() != 'Windows':
+        return
+
+    try:
+        from ctypes import wintypes, windll, byref
+        # Dokumentacja Microsoft dla DwmSetWindowAttribute:
+        # https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
+        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (przed Windows 11 22H2)
+        # DWMWA_SYSTEMBACKDROP_TYPE = 38
+        
+        # Wartość 1 = Ciemny, 0 = Jasny
+        value = wintypes.DWORD(1 if color_mode == 'dark' else 0)
+        
+        # Próba ustawienia atrybutu dla Windows 11 (nowsze API)
+        # DWMWA_SYSTEMBACKDROP_TYPE, 2 = Mica Alt
+        # windll.dwmapi.DwmSetWindowAttribute(hwnd, 38, byref(wintypes.DWORD(2)), 4)
+
+        # Ustawienie atrybutu dla trybu ciemnego (działa na Win10 i Win11)
+        windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(value), 4)
+
+    except Exception as e:
+        print(f"Nie udało się ustawić motywu paska tytułu Windows: {e}")
+
 
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
@@ -65,10 +92,22 @@ class MainWindow(QMainWindow):
             self.version_checker.start()
 
     def handle_version_check_result(self, latest_version, release_url):
+        def parse_version(v):
+            v = v.lower().replace("v", "").replace("beta", ".").replace("dev", ".")
+            parts = []
+            for part in v.split('.'):
+                try:
+                    parts.append(int(part))
+                except ValueError:
+                    pass  # Ignore non-numeric parts
+            return tuple(parts)
+
         ignored_versions = self.settings.value("update_check/ignored", [], type=str)
 
-        # Proste porównanie - zakładamy, że tagi są różne
-        if latest_version != self.app_version and latest_version not in ignored_versions:
+        current_v = parse_version(latest_release_tag)
+        latest_v = parse_version(latest_version)
+
+        if latest_v > current_v and latest_version not in ignored_versions:
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Dostępna nowa wersja!")
             msg_box.setTextFormat(Qt.TextFormat.RichText)
@@ -221,7 +260,11 @@ class MainWindow(QMainWindow):
         use_per_option_paths = self.use_per_option_paths_action.isChecked()
         dialog = ComponentSelectionDialog(use_per_option_paths, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
+            show_summary = self.settings.value("show_task_summary_confirmation", False, type=bool)
+
+            # --- Logika dla zadań wsadowych ---
             if dialog.batch_tasks:
+                # Dla zadań wsadowych podsumowanie jest niepraktyczne, dodajemy bezpośrednio
                 default_subtitle_name = self.settings.value("remux/subtitle_track_name", "")
                 for task_data in dialog.batch_tasks:
                     (mkv_file, subtitle_file, font_folder, selected_script,
@@ -235,43 +278,82 @@ class MainWindow(QMainWindow):
                         subtitle_track_name=default_subtitle_name,
                         movie_name=""
                     )
+            # --- Logika dla pojedynczego zadania ---
             else:
-                self.task_manager.add_task(
-                    dialog.mkv_file, dialog.subtitle_file, dialog.font_folder,
-                    dialog.selected_script, dialog.selected_ffmpeg_script,
-                    dialog.gpu_bitrate, dialog.debug_mode,
-                    getattr(dialog, 'intro_file', None),
-                    dialog.output_path,
-                    subtitle_track_name=dialog.subtitle_track_name,
-                    movie_name=dialog.movie_name
-                )
+                task_details = {
+                    "mkv_file": dialog.mkv_file,
+                    "subtitle_file": dialog.subtitle_file,
+                    "font_folder": dialog.font_folder,
+                    "selected_script": dialog.selected_script,
+                    "selected_ffmpeg_script": dialog.selected_ffmpeg_script,
+                    "gpu_bitrate": dialog.gpu_bitrate,
+                    "debug_mode": dialog.debug_mode,
+                    "intro_file": getattr(dialog, 'intro_file', None),
+                    "output_path": dialog.output_path,
+                    "subtitle_track_name": dialog.subtitle_track_name,
+                    "movie_name": dialog.movie_name
+                }
+
+                do_add_task = False
+                if show_summary:
+                    summary_dialog = TaskSummaryDialog(task_details, self)
+                    if summary_dialog.exec() == QDialog.DialogCode.Accepted:
+                        do_add_task = True
+                else:
+                    do_add_task = True
+
+                if do_add_task:
+                    self.task_manager.add_task(**task_details)
+
             if not self.process_manager.is_running():
                 self.process_manager.process_next_task()
 
     def apply_theme(self, theme_name, save=True):
         app = QApplication.instance()
 
-        # Najpierw zresetuj do stylu Fusion, aby zapewnić czystą bazę dla arkuszy stylów
+        # Stwórz paletę, która jest wskazówką dla systemu i pasuje do motywu QSS
+        palette = QPalette()
+        if theme_name == "dark":
+            palette.setColor(QPalette.ColorRole.Window, QColor("#2b2b2b"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#e0e0e0"))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor("#E67E22")) # Użyj koloru akcentu z motywu
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        elif theme_name == "pro_light":
+            palette.setColor(QPalette.ColorRole.Window, QColor("#F0F0F0"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#111111"))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor("#0078D4")) # Użyj koloru akcentu z motywu
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        else:
+            # Dla motywu systemowego i Fusion, użyj domyślnej palety stylu
+            # To zapobiega nadpisywaniu kolorów systemowych
+            original_style = QStyleFactory.create(self.original_style_name)
+            if original_style:
+                app.setPalette(original_style.standardPalette())
+
+        if theme_name in ["dark", "pro_light"]:
+            app.setPalette(palette)
+
+        # Zastosuj arkusz stylów i specyficzną logikę dla Windows
         QApplication.setStyle(QStyleFactory.create("Fusion"))
 
         if theme_name == "system":
             style_engine = self.settings.value("style_engine", "default", type=str)
             style_to_apply = self.original_style_name if style_engine == "default" else style_engine
-            
-            # Spróbuj zastosować wybrany styl, jeśli się nie uda, wróć do oryginału
             if not QStyleFactory.create(style_to_apply):
-                print(f"OSTRZEŻENIE: Nie udało się załadować stylu '{style_to_apply}'. Używam domyślnego.")
                 style_to_apply = self.original_style_name
-
             QApplication.setStyle(style_to_apply)
             app.setStyleSheet(self.original_stylesheet)
+            set_windows_titlebar_color(self.winId(), 'light')
 
         elif theme_name == "dark":
             app.setStyleSheet(get_dark_theme_qss())
+            set_windows_titlebar_color(self.winId(), 'dark')
         elif theme_name == "pro_light":
             app.setStyleSheet(get_professional_light_theme_qss())
+            set_windows_titlebar_color(self.winId(), 'light')
         elif theme_name == "light":
             app.setStyleSheet(get_light_theme_qss())
+            set_windows_titlebar_color(self.winId(), 'light')
         
         if save:
             self.settings.setValue("theme", theme_name)

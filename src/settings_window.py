@@ -1,9 +1,11 @@
 import platform
 import shutil
+import subprocess
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QTabWidget, QWidget, QGroupBox, 
                              QFormLayout, QLabel, QLineEdit, QPushButton, QSpinBox, 
                              QCheckBox, QDialogButtonBox, QFileDialog, QComboBox, QHBoxLayout,
-                             QMessageBox, QSplitter, QListWidget, QTextEdit, QListWidgetItem)
+                             QMessageBox, QSplitter, QListWidget, QTextEdit, QListWidgetItem,
+                             QRadioButton, QButtonGroup, QInputDialog)
 from PyQt6.QtGui import QIcon, QPixmap
 import urllib.request
 from PyQt6.QtCore import QSettings, Qt, QProcess, QEvent, QThread, pyqtSignal
@@ -77,18 +79,21 @@ class SettingsWindow(QDialog):
         # Inicjalizacja zakładek
         self.general_tab = QWidget()
         self.paths_tab = QWidget()
+        self.presets_tab = QWidget() # NOWA ZAKŁADKA
         self.processing_tab = QWidget()
         self.diagnostics_tab = QWidget()
         self.about_tab = QWidget()
 
         self.tabs.addTab(self.general_tab, "Ogólne")
         self.tabs.addTab(self.paths_tab, "Ścieżki")
+        self.tabs.addTab(self.presets_tab, "Presety") # NOWA ZAKŁADKA
         self.tabs.addTab(self.processing_tab, "Przetwarzanie")
         self.tabs.addTab(self.diagnostics_tab, "Diagnostyka")
         self.tabs.addTab(self.about_tab, "O Programie")
 
         self._create_general_tab()
         self._create_paths_tab()
+        self._create_presets_tab() # NOWA METODA
         self._create_processing_tab()
         self._create_diagnostics_tab()
         self._create_about_tab()
@@ -105,6 +110,22 @@ class SettingsWindow(QDialog):
         self.layout.addWidget(self.button_box)
 
         self.load_settings()
+        self._load_presets_list() # Wczytaj presety do nowej zakładki
+        self._get_gpu_info()
+
+    def _get_gpu_info(self):
+        try:
+            if self.is_windows:
+                command = "wmic path win32_videocontroller get name"
+                result = subprocess.run(command, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
+                gpu_info = result.stdout.strip().split('\n')[1]
+            else:
+                command = "lspci | grep VGA"
+                result = subprocess.run(command, capture_output=True, text=True, check=True, shell=True)
+                gpu_info = result.stdout.strip().split(': ', 2)[-1]
+            self.gpu_info_label.setText(gpu_info)
+        except (subprocess.CalledProcessError, FileNotFoundError, IndexError):
+            self.gpu_info_label.setText("Nie udało się pobrać informacji o karcie graficznej.")
 
     def _create_general_tab(self):
         layout = QFormLayout(self.general_tab)
@@ -114,7 +135,7 @@ class SettingsWindow(QDialog):
         self.themes = {
             "system": "Systemowy", 
             "dark": "Ciemny", 
-            "pro_light": "Jasny Profesjonalny",
+            "pro_light": "Jasny",
             "light": "Fusion"
         }
         self.theme_combo.addItems(self.themes.values())
@@ -137,6 +158,9 @@ class SettingsWindow(QDialog):
 
         self.detailed_view_checkbox = QCheckBox("Używaj szczegółowego widoku listy zadań")
         layout.addRow(self.detailed_view_checkbox)
+
+        self.show_summary_checkbox = QCheckBox("Pokazuj podsumowanie przed dodaniem zadania")
+        layout.addRow(self.show_summary_checkbox)
 
         self.theme_combo.currentTextChanged.connect(self._update_style_engine_visibility)
         self._update_style_engine_visibility(self.theme_combo.currentText())
@@ -166,6 +190,278 @@ class SettingsWindow(QDialog):
 
         layout.addWidget(group_box)
 
+    def _create_presets_tab(self):
+        # --- Główny layout zakładki ---
+        tab_layout = QHBoxLayout(self.presets_tab)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        tab_layout.addWidget(splitter)
+
+        # --- Lewy panel: Lista presetów i przyciski ---
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        
+        self.presets_list_widget = QListWidget()
+        self.presets_list_widget.currentItemChanged.connect(self._display_preset_details)
+        left_layout.addWidget(self.presets_list_widget)
+
+        preset_buttons_layout = QHBoxLayout()
+        new_preset_button = QPushButton("Nowy")
+        delete_preset_button = QPushButton("Usuń")
+        new_preset_button.clicked.connect(self._new_preset)
+        delete_preset_button.clicked.connect(self._delete_preset)
+        preset_buttons_layout.addWidget(new_preset_button)
+        preset_buttons_layout.addWidget(delete_preset_button)
+        left_layout.addLayout(preset_buttons_layout)
+
+        # --- Prawy panel: Formularz edycji presetu ---
+        self.right_panel = QWidget()
+        right_layout = QFormLayout(self.right_panel)
+        right_layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self.right_panel.setEnabled(False) # Domyślnie wyłączony
+
+        # Kontrolki formularza (muszą być atrybutami klasy, by mieć do nich dostęp)
+        # 1. Główny skrypt
+        self.preset_script_group = QButtonGroup(self)
+        self.preset_script1 = QRadioButton("Tylko FFmpeg (hardsub)")
+        self.preset_script2 = QRadioButton("Użyj mkvmerge i FFmpeg")
+        self.preset_script3 = QRadioButton("Użyj tylko mkvmerge (remux)")
+        self.preset_script4 = QRadioButton("FFmpeg + Wstawka (intro)")
+        self.preset_script_group.addButton(self.preset_script1, 1)
+        self.preset_script_group.addButton(self.preset_script2, 2)
+        self.preset_script_group.addButton(self.preset_script3, 3)
+        self.preset_script_group.addButton(self.preset_script4, 4)
+        script_box = QVBoxLayout()
+        script_box.addWidget(self.preset_script1)
+        script_box.addWidget(self.preset_script2)
+        script_box.addWidget(self.preset_script3)
+        script_box.addWidget(self.preset_script4)
+        right_layout.addRow("Główny skrypt:", script_box)
+
+        # 2. Skrypt enkodera FFmpeg
+        self.preset_ffmpeg_group = QButtonGroup(self)
+        self.preset_ffmpeg1 = QRadioButton("CPU (CRF)")
+        self.preset_ffmpeg2 = QRadioButton("GPU (Nvidia CUDA)")
+        self.preset_ffmpeg3 = QRadioButton("GPU (Intel/AMD VA-API)")
+        self.preset_ffmpeg_group.addButton(self.preset_ffmpeg1, 1)
+        self.preset_ffmpeg_group.addButton(self.preset_ffmpeg2, 2)
+        self.preset_ffmpeg_group.addButton(self.preset_ffmpeg3, 3)
+        ffmpeg_box = QVBoxLayout()
+        ffmpeg_box.addWidget(self.preset_ffmpeg1)
+        ffmpeg_box.addWidget(self.preset_ffmpeg2)
+        ffmpeg_box.addWidget(self.preset_ffmpeg3)
+        right_layout.addRow("Enkoder FFmpeg:", ffmpeg_box)
+
+        # 3. Bitrate
+        self.preset_bitrate_spin = QSpinBox()
+        self.preset_bitrate_spin.setRange(1, 100)
+        self.preset_bitrate_spin.setSuffix(" Mbps")
+        right_layout.addRow("Bitrate (GPU/Wstawka):", self.preset_bitrate_spin)
+
+        # 4. Nazwa ścieżki napisów
+        self.preset_subtitle_name_edit = QLineEdit()
+        right_layout.addRow("Nazwa ścieżki napisów:", self.preset_subtitle_name_edit)
+
+        # 5. Nazwa filmu (mkvmerge)
+        self.preset_movie_name_edit = QLineEdit()
+        self.preset_keep_movie_name_check = QCheckBox("Zachowaj oryginalną")
+        movie_name_layout = QHBoxLayout()
+        movie_name_layout.addWidget(self.preset_movie_name_edit)
+        movie_name_layout.addWidget(self.preset_keep_movie_name_check)
+        right_layout.addRow("Tytuł filmu (mkvmerge):", movie_name_layout)
+
+        # 6. Inne opcje
+        self.preset_debug_check = QCheckBox("Debug Mode")
+        self.preset_custom_output_check = QCheckBox("Niestandardowe wyjście")
+        other_box = QVBoxLayout()
+        other_box.addWidget(self.preset_debug_check)
+        other_box.addWidget(self.preset_custom_output_check)
+        right_layout.addRow("Inne opcje:", other_box)
+
+        # 7. Folder wyjściowy
+        self.preset_output_dir_edit = QLineEdit()
+        self.preset_output_dir_button = QPushButton("Przeglądaj...")
+        self.preset_output_dir_button.clicked.connect(self._select_preset_output_dir)
+        output_dir_layout = QHBoxLayout()
+        output_dir_layout.addWidget(self.preset_output_dir_edit)
+        output_dir_layout.addWidget(self.preset_output_dir_button)
+        right_layout.addRow("Folder wyjściowy:", output_dir_layout)
+
+        # --- Podłączenie sygnałów do auto-zapisu ---
+        self.preset_script_group.buttonClicked.connect(self._save_current_preset_details)
+        self.preset_ffmpeg_group.buttonClicked.connect(self._save_current_preset_details)
+        self.preset_bitrate_spin.valueChanged.connect(self._save_current_preset_details)
+        self.preset_subtitle_name_edit.textChanged.connect(self._save_current_preset_details)
+        self.preset_movie_name_edit.textChanged.connect(self._save_current_preset_details)
+        self.preset_keep_movie_name_check.toggled.connect(self._save_current_preset_details)
+        self.preset_debug_check.toggled.connect(self._save_current_preset_details)
+        self.preset_custom_output_check.toggled.connect(self._save_current_preset_details)
+
+        # --- Podłączenie sygnałów do aktualizacji UI formularza ---
+        self.preset_script_group.buttonClicked.connect(self._update_preset_form_state)
+        self.preset_ffmpeg_group.buttonClicked.connect(self._update_preset_form_state)
+        self.preset_keep_movie_name_check.toggled.connect(self._update_preset_form_state)
+
+        # --- Dodanie paneli do splittera ---
+        splitter.addWidget(left_panel)
+        splitter.addWidget(self.right_panel)
+        splitter.setSizes([200, 450])
+
+    def _load_presets_list(self):
+        self.presets_list_widget.blockSignals(True)
+        self.presets_list_widget.clear()
+        self.settings.beginGroup("presets")
+        preset_names = self.settings.childGroups()
+        self.presets_list_widget.addItems(sorted(preset_names))
+        self.settings.endGroup()
+        self.presets_list_widget.blockSignals(False)
+        self.right_panel.setEnabled(self.presets_list_widget.count() > 0)
+        if self.presets_list_widget.count() > 0:
+            self.presets_list_widget.setCurrentRow(0)
+
+    def _display_preset_details(self, current_item, previous_item):
+        if not current_item:
+            self.right_panel.setEnabled(False)
+            # Wyczyść formularz, jeśli nic nie jest zaznaczone
+            for widget in self.right_panel.findChildren(QWidget):
+                if isinstance(widget, QLineEdit):
+                    widget.clear()
+                elif isinstance(widget, QCheckBox):
+                    widget.setChecked(False)
+                elif isinstance(widget, QSpinBox):
+                    widget.setValue(widget.minimum())
+            return
+
+        # Zablokuj sygnały, aby uniknąć zapisu podczas wczytywania
+        for widget in self.right_panel.findChildren(QWidget):
+            widget.blockSignals(True)
+
+        self.right_panel.setEnabled(True)
+        preset_name = current_item.text()
+        self.settings.beginGroup(f"presets/{preset_name}")
+
+        script_id = self.settings.value("selected_script", 3, type=int)
+        btn_to_check = self.preset_script_group.button(script_id)
+        if btn_to_check:
+            btn_to_check.setChecked(True)
+
+        ffmpeg_id = self.settings.value("selected_ffmpeg_script", 1, type=int)
+        btn_to_check = self.preset_ffmpeg_group.button(ffmpeg_id)
+        if btn_to_check:
+            btn_to_check.setChecked(True)
+
+        self.preset_bitrate_spin.setValue(self.settings.value("gpu_bitrate", 8, type=int))
+        self.preset_subtitle_name_edit.setText(self.settings.value("subtitle_track_name", ""))
+        self.preset_movie_name_edit.setText(self.settings.value("movie_name", ""))
+        self.preset_keep_movie_name_check.setChecked(self.settings.value("keep_movie_name", False, type=bool))
+        self.preset_debug_check.setChecked(self.settings.value("debug_mode", False, type=bool))
+        self.preset_custom_output_check.setChecked(self.settings.value("custom_output", False, type=bool))
+        self.preset_output_dir_edit.setText(self.settings.value("output_dir", ""))
+
+        self.settings.endGroup()
+
+        # Odblokuj sygnały po wczytaniu
+        for widget in self.right_panel.findChildren(QWidget):
+            widget.blockSignals(False)
+
+        # Zaktualizuj stan włącz/wyłącz kontrolek
+        self._update_preset_form_state()
+
+    def _save_current_preset_details(self):
+        current_item = self.presets_list_widget.currentItem()
+        if not current_item:
+            return
+
+        preset_name = current_item.text()
+        self.settings.beginGroup(f"presets/{preset_name}")
+        self.settings.setValue("selected_script", self.preset_script_group.checkedId())
+        self.settings.setValue("selected_ffmpeg_script", self.preset_ffmpeg_group.checkedId())
+        self.settings.setValue("gpu_bitrate", self.preset_bitrate_spin.value())
+        self.settings.setValue("subtitle_track_name", self.preset_subtitle_name_edit.text())
+        self.settings.setValue("movie_name", self.preset_movie_name_edit.text())
+        self.settings.setValue("keep_movie_name", self.preset_keep_movie_name_check.isChecked())
+        self.settings.setValue("debug_mode", self.preset_debug_check.isChecked())
+        self.settings.setValue("custom_output", self.preset_custom_output_check.isChecked())
+        self.settings.setValue("output_dir", self.preset_output_dir_edit.text())
+        self.settings.endGroup()
+
+    def _new_preset(self):
+        preset_name, ok = QInputDialog.getText(self, "Nowy Preset", "Wprowadź nazwę dla nowego presetu:")
+        if ok and preset_name.strip():
+            name = preset_name.strip()
+            self.settings.beginGroup("presets")
+            if name in self.settings.childGroups():
+                QMessageBox.warning(self, "Błąd", "Preset o tej nazwie już istnieje.")
+                self.settings.endGroup()
+                return
+            self.settings.endGroup()
+
+            # Zapisz domyślne wartości dla nowego presetu
+            self.settings.beginGroup(f"presets/{name}")
+            self.settings.setValue("selected_script", 3)
+            self.settings.setValue("selected_ffmpeg_script", 1)
+            self.settings.setValue("gpu_bitrate", 8)
+            self.settings.setValue("subtitle_track_name", "")
+            self.settings.setValue("movie_name", "")
+            self.settings.setValue("keep_movie_name", False)
+            self.settings.setValue("debug_mode", False)
+            self.settings.setValue("custom_output", False)
+            self.settings.setValue("output_dir", "")
+            self.settings.endGroup()
+
+            self._load_presets_list()
+            # Automatycznie zaznacz nowo dodany element
+            items = self.presets_list_widget.findItems(name, Qt.MatchFlag.MatchExactly)
+            if items:
+                self.presets_list_widget.setCurrentItem(items[0])
+
+    def _select_preset_output_dir(self):
+        directory = QFileDialog.getExistingDirectory(self, "Wybierz folder wyjściowy dla presetu", self.preset_output_dir_edit.text())
+        if directory:
+            self.preset_output_dir_edit.setText(directory)
+            self._save_current_preset_details() # Auto-zapis po wybraniu
+
+    def _update_preset_form_state(self):
+        if not self.right_panel.isEnabled():
+            return
+
+        script_id = self.preset_script_group.checkedId()
+        ffmpeg_id = self.preset_ffmpeg_group.checkedId()
+
+        # Logika dla opcji enkodera FFmpeg
+        is_ffmpeg_relevant = script_id in [1, 2, 4]
+        for btn in self.preset_ffmpeg_group.buttons():
+            btn.setEnabled(is_ffmpeg_relevant)
+
+        # Logika dla bitrate
+        is_gpu_encoder = ffmpeg_id in [2, 3]
+        is_bitrate_relevant = (is_ffmpeg_relevant and is_gpu_encoder) or script_id == 4
+        self.preset_bitrate_spin.setEnabled(is_bitrate_relevant)
+
+        # Logika dla opcji remuxa (nazwa ścieżki, nazwa filmu)
+        is_remux_relevant = script_id in [2, 3]
+        self.preset_subtitle_name_edit.setEnabled(is_remux_relevant)
+        self.preset_movie_name_edit.setEnabled(is_remux_relevant and not self.preset_keep_movie_name_check.isChecked())
+        self.preset_keep_movie_name_check.setEnabled(is_remux_relevant)
+
+    def _delete_preset(self):
+        current_item = self.presets_list_widget.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Błąd", "Najpierw wybierz preset do usunięcia.")
+            return
+
+        preset_name = current_item.text()
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     f"Czy na pewno chcesz usunąć preset '{preset_name}'?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+
+        if reply == QMessageBox.StandardButton.Yes:
+            self.settings.beginGroup("presets")
+            self.settings.remove(preset_name)
+            self.settings.endGroup()
+            self._load_presets_list()
+
     def _create_processing_tab(self):
         layout = QFormLayout(self.processing_tab)
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
@@ -173,10 +469,13 @@ class SettingsWindow(QDialog):
         self.gpu_bitrate_spin = QSpinBox()
         self.gpu_bitrate_spin.setRange(1, 100)
         self.gpu_bitrate_spin.setSuffix(" Mbps")
-        layout.addRow("Domyślny bitrate dla GPU:", self.gpu_bitrate_spin)
+        layout.addRow("Domyślny bitrate dla GPU/FFmpeg + wstawka:", self.gpu_bitrate_spin)
 
         self.subtitle_track_name_edit = QLineEdit()
         layout.addRow("Domyślna nazwa ścieżki napisów:", self.subtitle_track_name_edit)
+
+        self.gpu_info_label = QLabel("Wczytywanie...")
+        layout.addRow("Karta graficzna:", self.gpu_info_label)
 
     def _create_about_tab(self):
         main_layout = QVBoxLayout(self.about_tab)
@@ -281,6 +580,8 @@ class SettingsWindow(QDialog):
         self.discord_rpc_checkbox.setChecked(self.settings.value("discord_rpc_enabled", False, type=bool))
         self.detailed_view_checkbox.setChecked(self.settings.value("detailed_view", False, type=bool))
 
+        self.show_summary_checkbox.setChecked(self.settings.value("show_task_summary_confirmation", False, type=bool))
+
         for key, edit in self.path_edits.items():
             edit.setText(self.settings.value(key, ""))
 
@@ -300,6 +601,8 @@ class SettingsWindow(QDialog):
 
         self.settings.setValue("discord_rpc_enabled", self.discord_rpc_checkbox.isChecked())
         self.settings.setValue("detailed_view", self.detailed_view_checkbox.isChecked())
+
+        self.settings.setValue("show_task_summary_confirmation", self.show_summary_checkbox.isChecked())
 
         for key, edit in self.path_edits.items():
             self.settings.setValue(key, edit.text())
@@ -494,4 +797,4 @@ class SettingsWindow(QDialog):
         dialog.exec()
 
     def on_image_download_error(self, error_string):
-        QMessageBox.warning(self, "Błąd pobierania", f"Nie udało się pobrać obrazka:\n{error_string}")
+        QMessageBox.warning(self, "Błąd pobierania", f"Niespodzianki nie ma bo nie działa\n{error_string}")
