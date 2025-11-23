@@ -22,13 +22,11 @@ class ComponentSelectionDialog(QDialog):
         self.setGeometry(100, 100, 650, 650)
         self.setAcceptDrops(True)
         self.settings = QSettings("settings.ini", QSettings.Format.IniFormat)
-        self.batch_tasks = []
+        self.batch_import_handler = BatchImportLogic(self)
+        self.tasks_to_return = [] # Nowa zmienna do przechowywania zadań do zwrócenia
         self.mkv_file, self.subtitle_file, self.font_folder, self.intro_file = None, None, None, None
         self.output_path = None
         self.default_output_name = ""
-
-        # --- ZMIANA 2: Inicjalizacja pomocnika ---
-        self.batch_import_handler = BatchImportLogic(self)
 
         self._setup_ui()
         self._connect_signals()
@@ -191,7 +189,7 @@ class ComponentSelectionDialog(QDialog):
         self.ffmpeg_script_label = QLabel("Wybierz skrypt FFmpeg (dla opcji z FFmpeg):")
         self.script1_radio = QRadioButton("CPU (CRF)")
         self.script2_radio = QRadioButton("GPU (Nvidia CUDA)")
-        self.script3_radio = QRadioButton("GPU (Intel/AMD VA-API)")
+        self.script3_radio = QRadioButton("GPU (Intel VA-API)")
         self.script1_radio.setChecked(True)
         self.script_button_group = QButtonGroup()
         self.script_button_group.addButton(self.script1_radio, 1)
@@ -294,7 +292,7 @@ class ComponentSelectionDialog(QDialog):
         """Obsługuje logikę importu wsadowego i zamykania okna."""
         tasks = self.batch_import_handler.import_from_txt()
         if tasks is not None:
-            self.batch_tasks = tasks
+            self.tasks_to_return = tasks
             self.accept() # Zamknij to okno, aby MainWindow mogło przetworzyć zadania
 
     def show_mkv_info_dialog(self):
@@ -303,12 +301,32 @@ class ComponentSelectionDialog(QDialog):
             dialog.exec()
 
     def update_ui_state(self):
-        self.info_button.setEnabled(self.mkv_file is not None and self.mkv_file.is_file())
+        self._update_info_button_state()
+        
         selected_id = self.button_group.checkedId()
+        self._update_script_dependent_visibility(selected_id)
+        
+        self._update_custom_output_state()
+        
+        self._update_ffmpeg_encoder_state(selected_id)
+        
+        self._update_remux_group_state(selected_id)
+        
+        self._update_output_name_and_warnings(selected_id)
+        
+        self._update_validation_state()
+
+    def _update_info_button_state(self):
+        """Aktualizuje stan przycisku informacji o pliku MKV."""
+        self.info_button.setEnabled(self.mkv_file is not None and self.mkv_file.is_file())
+
+    def _update_script_dependent_visibility(self, selected_id):
+        """Aktualizuje widoczność i stan opcji zależnych od wybranego skryptu."""
         is_output_tab_disabled = (selected_id == 2)
         self.output_group.setVisible(not is_output_tab_disabled)
         self.suffix_group.setVisible(not is_output_tab_disabled)
         self.output_disabled_label.setVisible(is_output_tab_disabled)
+
         needs_subtitles = selected_id in [1, 2, 3]
         needs_intro = selected_id == 4
         self.subtitle_label.setEnabled(needs_subtitles)
@@ -317,6 +335,9 @@ class ComponentSelectionDialog(QDialog):
         self.font_button.setEnabled(needs_subtitles)
         self.intro_label.setEnabled(needs_intro)
         self.intro_button.setEnabled(needs_intro)
+
+    def _update_custom_output_state(self):
+        """Aktualizuje stan kontrolek niestandardowego wyjścia."""
         use_custom_output = self.custom_output_checkbox.isChecked()
         self.output_dir_label.setEnabled(use_custom_output)
         self.output_dir_edit.setEnabled(use_custom_output)
@@ -324,34 +345,39 @@ class ComponentSelectionDialog(QDialog):
         self.output_name_label.setEnabled(use_custom_output)
         self.output_name_edit.setEnabled(use_custom_output)
         self.suffix_group.setEnabled(use_custom_output)
+
+    def _update_ffmpeg_encoder_state(self, selected_id):
+        """Aktualizuje stan opcji enkodera FFmpeg i bitrate."""
         ffmpeg_encoder_id = self.script_button_group.checkedId()
         ffmpeg_encoder_options_enabled = selected_id in [1, 2, 4]
         is_gpu_selected = ffmpeg_encoder_options_enabled and ffmpeg_encoder_id in [2, 3]
-        bitrate_is_relevant = is_gpu_selected or needs_intro
+        bitrate_is_relevant = is_gpu_selected or (selected_id == 4) # Bitrate dla GPU lub wstawki
+        
         self.ffmpeg_script_label.setEnabled(ffmpeg_encoder_options_enabled)
         self.bitrate_label.setEnabled(bitrate_is_relevant)
         self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
 
-        # Scentralizowana logika widoczności i stanu przycisków enkodera
         self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
         self.script2_radio.setVisible(not self.is_flatpak)
         self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak)
         self.script3_radio.setVisible(not self.is_flatpak and not self.is_windows)
         self.script3_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak and not self.is_windows)
         self.movie_name_edit.setDisabled(self.movie_name_checkbox.isChecked())
-                # --- DODANA LOGIKA DLA NOWEGO POLA ---
-        # Znajdź grupę remux (jeśli istnieje) i ustaw jej widoczność
-        remux_group = self.findChild(QGroupBox, "remux_group") # Musisz nadać jej nazwę w _setup_ui
-        if remux_group: # Bezpieczne sprawdzenie
-            is_remux_relevant = selected_id in [2, 3] # Aktywne dla skryptów mkvmerge
+
+    def _update_remux_group_state(self, selected_id):
+        """Aktualizuje widoczność i stan grupy ustawień remuxa."""
+        remux_group = self.findChild(QGroupBox, "remux_group")
+        if remux_group:
+            is_remux_relevant = selected_id in [2, 3]
             remux_group.setEnabled(is_remux_relevant)
-        # ------------------------------------------
-        # Tylko aktualizuj domyślną nazwę, jeśli użytkownik NIE jest w trybie niestandardowym
+
+    def _update_output_name_and_warnings(self, selected_id):
+        """Aktualizuje domyślną nazwę wyjściową i wyświetla ostrzeżenia."""
         if not self.custom_output_checkbox.isChecked():
             self.output_name_edit.setText(self._generate_default_output_name())
 
-        # Logika ostrzeżeń o opcjach eksperymentalnych
         warning_text = ""
+        ffmpeg_encoder_id = self.script_button_group.checkedId()
         if selected_id == 4 and ffmpeg_encoder_id in [2, 3]:
             warning_text = "Opcja GPU dla skryptu z wstawką jest EKSPERYMENTALNA."
         elif selected_id in [1, 2] and ffmpeg_encoder_id == 3:
@@ -360,6 +386,8 @@ class ComponentSelectionDialog(QDialog):
         self.encoder_warning_label.setText(warning_text)
         self.encoder_warning_label.setVisible(bool(warning_text))
 
+    def _update_validation_state(self):
+        """Wywołuje walidację wejść."""
         self._validate_inputs()
 
     def _generate_default_output_name(self):
@@ -415,7 +443,7 @@ class ComponentSelectionDialog(QDialog):
 
     def accept(self):
         # Jeśli zadania pochodzą z importu pliku, natychmiast zamknij okno.
-        if self.batch_tasks:
+        if self.tasks_to_return:
             super().accept()
             return
 
@@ -424,6 +452,7 @@ class ComponentSelectionDialog(QDialog):
             return
 
         # Sprawdź, czy użytkownik chce użyć niestandardowych ustawień.
+        output_path = None
         if self.custom_output_checkbox.isChecked():
             # Jeśli tak, zweryfikuj podane przez niego ścieżki.
             output_dir = self.output_dir_edit.text()
@@ -435,15 +464,31 @@ class ComponentSelectionDialog(QDialog):
                 QMessageBox.warning(self, "Błąd", "Wybrany folder wyjściowy nie istnieje.")
                 return
             # Ustaw pełną, niestandardową ścieżkę wyjściową.
-            self.output_path = Path(output_dir) / output_name
+            output_path = Path(output_dir) / output_name
         else:
             # Jeśli checkbox jest ODZNACZONY, jawnie ustawiamy ścieżkę na None.
             # To jest sygnał dla ProcessManagera, aby sam wygenerował domyślną ścieżkę.
-            self.output_path = None
+            output_path = None
 
         # Skrypt typu 2 nigdy nie używa ścieżki wyjściowej, więc dla pewności ją zerujemy.
         if self.button_group.checkedId() == 2:
-            self.output_path = None
+            output_path = None
+
+        # Skonstruuj słownik z detalami pojedynczego zadania
+        task_details = {
+            "mkv_file": self.mkv_file,
+            "subtitle_file": self.subtitle_file,
+            "font_folder": self.font_folder,
+            "selected_script": self.selected_script,
+            "selected_ffmpeg_script": self.selected_ffmpeg_script,
+            "gpu_bitrate": self.gpu_bitrate,
+            "debug_mode": self.debug_mode,
+            "intro_file": self.intro_file,
+            "output_path": output_path,
+            "subtitle_track_name": self.subtitle_track_name,
+            "movie_name": self.movie_name
+        }
+        self.tasks_to_return = [task_details] # Zapisz pojedyncze zadanie jako listę
 
         super().accept()
 
@@ -682,4 +727,3 @@ class ComponentSelectionDialog(QDialog):
         if self.movie_name_checkbox.isChecked():
             return " "  # Preserve original by returning a space
         return self.movie_name_edit.text()
-

@@ -27,6 +27,8 @@ class ProcessManager(QObject):
         self.total_duration_seconds = 0
         self.start_time = None
         self.current_ffmpeg_speed = None
+        self.eta_seconds = -1
+        self.progress_percentage = -1.0
 
     def _start_process(self, program, arguments):
         if self.process is None:
@@ -80,11 +82,18 @@ class ProcessManager(QObject):
         if time_match:
             h, m, s, _ = map(int, time_match.groups())
             processed_seconds = h * 3600 + m * 60 + s
+
+            if self.total_duration_seconds > 0:
+                self.progress_percentage = (processed_seconds / self.total_duration_seconds) * 100
+            else:
+                self.progress_percentage = 0
+
             if processed_seconds > 0:
                 elapsed_time = (datetime.now() - self.start_time).total_seconds()
                 processing_speed = processed_seconds / elapsed_time
                 if processing_speed > 0:
                     eta_seconds = int((self.total_duration_seconds - processed_seconds) / processing_speed)
+                    self.eta_seconds = eta_seconds
                     self.eta_updated.emit(eta_seconds)
 
     def process_next_task(self):
@@ -135,6 +144,8 @@ class ProcessManager(QObject):
     def task_completed(self, success=True):
         self.eta_updated.emit(-1)
         self.current_ffmpeg_speed = None
+        self.eta_seconds = -1
+        self.progress_percentage = -1.0
         if self.current_task:
             self.task_manager.complete_current_task()
         self.current_task = None
@@ -149,6 +160,8 @@ class ProcessManager(QObject):
     def kill_process(self):
         self.eta_updated.emit(-1)
         self.current_ffmpeg_speed = None
+        self.eta_seconds = -1
+        self.progress_percentage = -1.0
         if self.is_running():
             self.process.finished.disconnect()
             self.process.kill()

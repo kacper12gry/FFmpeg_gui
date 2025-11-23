@@ -28,6 +28,9 @@ class BatchEditDialog(QDialog):
         self.script_combo.currentIndexChanged.connect(self._update_form_state)
         self.encoder_combo.currentIndexChanged.connect(self._update_form_state)
         self.import_more_button.clicked.connect(self._import_more_tasks)
+        self.up_button.clicked.connect(self._move_task_up)
+        self.down_button.clicked.connect(self._move_task_down)
+        self.delete_button.clicked.connect(self._delete_task)
 
         self._populate_list()
         if self.task_list.count() > 0:
@@ -54,8 +57,31 @@ class BatchEditDialog(QDialog):
         splitter = QSplitter(Qt.Orientation.Horizontal)
         main_layout.addWidget(splitter)
 
+        # Kontener dla listy i przycisków
+        list_container = QWidget()
+        list_layout = QHBoxLayout(list_container)
+        list_layout.setContentsMargins(0, 0, 0, 0)
+
         self.task_list = QListWidget()
-        splitter.addWidget(self.task_list)
+        list_layout.addWidget(self.task_list)
+
+        # Przyciski do zarządzania listą
+        button_panel = QVBoxLayout()
+        button_panel.setSpacing(5)
+        self.up_button = QPushButton(QIcon.fromTheme("go-up"), "")
+        self.down_button = QPushButton(QIcon.fromTheme("go-down"), "")
+        self.delete_button = QPushButton(QIcon.fromTheme("edit-delete"), "")
+        self.up_button.setToolTip("Przesuń zaznaczone zadanie w górę")
+        self.down_button.setToolTip("Przesuń zaznaczone zadanie w dół")
+        self.delete_button.setToolTip("Usuń zaznaczone zadanie")
+        
+        button_panel.addWidget(self.up_button)
+        button_panel.addWidget(self.down_button)
+        button_panel.addStretch()
+        button_panel.addWidget(self.delete_button)
+        list_layout.addLayout(button_panel)
+
+        splitter.addWidget(list_container)
 
         form_widget = QWidget()
         self.form_layout = QFormLayout(form_widget)
@@ -102,7 +128,7 @@ class BatchEditDialog(QDialog):
         for i, task in enumerate(self.tasks):
             text = f"Zadanie {i+1}: {task.mkv.name if task.mkv else 'Nowe zadanie'}"
             item = QListWidgetItem(text)
-            item.setData(Qt.ItemDataRole.UserRole, i)
+            item.setData(Qt.ItemDataRole.UserRole, task) # Przechowuj cały obiekt zadania
             
             if task.warnings:
                 item.setIcon(QIcon.fromTheme("dialog-warning"))
@@ -119,8 +145,7 @@ class BatchEditDialog(QDialog):
             return
 
         self.form_widget.setEnabled(True)
-        task_index = current.data(Qt.ItemDataRole.UserRole)
-        task = self.tasks[task_index]
+        task = current.data(Qt.ItemDataRole.UserRole) # Pobierz obiekt zadania
 
         for child in self.form_widget.findChildren(QWidget):
             child.blockSignals(True)
@@ -143,14 +168,20 @@ class BatchEditDialog(QDialog):
         if not item:
             return
         
-        task_index = item.data(Qt.ItemDataRole.UserRole)
-        
+        task_to_update = item.data(Qt.ItemDataRole.UserRole)
+        try:
+            task_index = self.tasks.index(task_to_update)
+        except ValueError:
+            # To nie powinno się zdarzyć, ale zabezpieczamy
+            return
+
         mkv_path = self.mkv_edit.findChild(QLineEdit).text()
         sub_path = self.sub_edit.findChild(QLineEdit).text()
         font_path = self.font_edit.findChild(QLineEdit).text()
         intro_path = self.intro_edit.findChild(QLineEdit).text()
         
-        self.tasks[task_index] = TaskData(
+        # Stwórz nowy, zaktualizowany obiekt i podmień go na liście
+        updated_task = TaskData(
             mkv=Path(mkv_path) if mkv_path else None,
             sub=Path(sub_path) if sub_path else None,
             font=Path(font_path) if font_path else None,
@@ -159,14 +190,62 @@ class BatchEditDialog(QDialog):
             bitrate=self.bitrate_spin.value(),
             debug=self.debug_check.isChecked(),
             intro=Path(intro_path) if intro_path else None,
-            output=self.tasks[task_index].output,
-            warnings=self.tasks[task_index].warnings
+            output=task_to_update.output, # Zachowaj oryginalne wartości
+            warnings=task_to_update.warnings
         )
-        item.setText(f"Zadanie {task_index+1}: {self.tasks[task_index].mkv.name if self.tasks[task_index].mkv else 'Nowe zadanie'}")
+        self.tasks[task_index] = updated_task
+        
+        # Zaktualizuj także dane w samym itemie listy
+        item.setData(Qt.ItemDataRole.UserRole, updated_task)
+        item.setText(f"Zadanie {task_index+1}: {updated_task.mkv.name if updated_task.mkv else 'Nowe zadanie'}")
 
     def get_edited_tasks(self):
         self._save_current_task_details(self.task_list.currentItem())
         return [astuple(task) for task in self.tasks]
+
+    def _delete_task(self):
+        current_row = self.task_list.currentRow()
+        if current_row == -1:
+            return
+        
+        reply = QMessageBox.question(self, "Potwierdzenie", 
+                                     "Czy na pewno chcesz usunąć to zadanie z listy?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                                     QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        del self.tasks[current_row]
+        self._populate_list()
+
+        # Ustaw zaznaczenie na elemencie, który zajął miejsce usuniętego
+        if self.tasks:
+            new_row = min(current_row, len(self.tasks) - 1)
+            self.task_list.setCurrentRow(new_row)
+
+    def _move_task_up(self):
+        current_row = self.task_list.currentRow()
+        if current_row <= 0:
+            return
+        
+        # Zapisz bieżące zmiany przed przesunięciem
+        self._save_current_task_details(self.task_list.currentItem())
+
+        self.tasks[current_row], self.tasks[current_row - 1] = self.tasks[current_row - 1], self.tasks[current_row]
+        self._populate_list()
+        self.task_list.setCurrentRow(current_row - 1)
+
+    def _move_task_down(self):
+        current_row = self.task_list.currentRow()
+        if current_row == -1 or current_row >= len(self.tasks) - 1:
+            return
+
+        # Zapisz bieżące zmiany przed przesunięciem
+        self._save_current_task_details(self.task_list.currentItem())
+
+        self.tasks[current_row], self.tasks[current_row + 1] = self.tasks[current_row + 1], self.tasks[current_row]
+        self._populate_list()
+        self.task_list.setCurrentRow(current_row + 1)
 
     def _update_form_state(self):
         script_type = self.script_combo.currentIndex() + 1

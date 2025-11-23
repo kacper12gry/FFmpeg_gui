@@ -65,24 +65,40 @@ class BatchImportLogic:
 
             if not mkv_path:
                 warnings.append("Brak ścieżki do pliku MKV.")
-            elif not mkv_path.is_file():
-                warnings.append(f"Plik MKV nie istnieje: {mkv_path_str}")
+            else:
+                try:
+                    if not mkv_path.is_file():
+                        warnings.append(f"Plik MKV nie istnieje: {mkv_path_str}")
+                except OSError as e:
+                    warnings.append(f"Nieprawidłowa ścieżka do pliku MKV: {e}")
 
             if script_type in [1, 2, 3]:
                 if not subtitle_path:
                     warnings.append("Brak ścieżki do napisów.")
-                elif not subtitle_path.is_file():
-                    warnings.append(f"Plik napisów nie istnieje: {sub_path_str}")
+                else:
+                    try:
+                        if not subtitle_path.is_file():
+                            warnings.append(f"Plik napisów nie istnieje: {sub_path_str}")
+                    except OSError as e:
+                        warnings.append(f"Nieprawidłowa ścieżka do napisów: {e}")
                 if not font_folder:
                     warnings.append("Brak folderu czcionek.")
-                elif not font_folder.is_dir():
-                    warnings.append(f"Folder czcionek nie istnieje: {font_path_str}")
+                else:
+                    try:
+                        if not font_folder.is_dir():
+                            warnings.append(f"Folder czcionek nie istnieje: {font_path_str}")
+                    except OSError as e:
+                        warnings.append(f"Nieprawidłowa ścieżka do folderu czcionek: {e}")
             
             if script_type == 4:
                 if not intro_path:
                     warnings.append("Brak ścieżki do wstawki.")
-                elif not intro_path.is_file():
-                    warnings.append(f"Plik wstawki nie istnieje: {intro_path_str}")
+                else:
+                    try:
+                        if not intro_path.is_file():
+                            warnings.append(f"Plik wstawki nie istnieje: {intro_path_str}")
+                    except OSError as e:
+                        warnings.append(f"Nieprawidłowa ścieżka do wstawki: {e}")
 
             if script_type not in [1, 2, 3, 4]:
                 warnings.append(f"Nieznany typ skryptu: {script_type}. Ustawiono domyślny (3).")

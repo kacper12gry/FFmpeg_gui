@@ -287,6 +287,59 @@ def get_dark_theme_qss():
         padding: 0 5px;
     }
 
+    /* --- Tabela (TableView) --- */
+    QTableView {
+        background-color: #212121;
+        border: 1px solid #4f4f4f;
+        border-radius: 5px;
+        gridline-color: #3c3c3c;
+    }
+    QTableView::item {
+        padding: 5px;
+        border-radius: 4px;
+        border: none;
+        color: #e0e0e0;
+    }
+    QTableView::item:hover {
+        background-color: #3c3c3c;
+    }
+    QTableView::item:selected {
+        background-color: #E67E22;
+        color: #ffffff;
+    }
+    QHeaderView::section {
+        background-color: #3c3c3c;
+        color: #e0e0e0;
+        padding: 6px;
+        border: 1px solid #4f4f4f;
+        font-weight: bold;
+    }
+    QTableView QTableCornerButton::section {
+        background-color: #3c3c3c;
+        border: 1px solid #4f4f4f;
+    }
+
+    /* --- Widok drzewa (QTreeView/QTreeWidget) --- */
+    QTreeView {
+        background-color: #212121;
+        border: 1px solid #4f4f4f;
+        border-radius: 5px;
+        gridline-color: #3c3c3c;
+    }
+    QTreeView::item {
+        padding: 5px;
+        border: none;
+        color: #e0e0e0;
+    }
+    QTreeView::item:hover {
+        background-color: #3c3c3c;
+    }
+    QTreeView::item:selected {
+        background-color: #E67E22;
+        color: #ffffff;
+        outline: 0;
+    }
+
     /* --- Paski przewijania (ScrollBars) --- */
     QScrollBar:vertical {
         width: 8px;
@@ -490,6 +543,49 @@ def get_professional_light_theme_qss():
         border: none;
         border-bottom: 1px solid #D0D0D0;
         font-weight: bold;
+    }
+    QTableView {
+        background-color: #FFFFFF;
+        border: 1px solid #E0E0E0;
+        gridline-color: #F0F0F0;
+    }
+    QTableView::item {
+        padding: 5px;
+        border-radius: 4px;
+        border: none;
+        color: #111111;
+    }
+    QTableView::item:hover {
+        background-color: #E3F2FD;
+    }
+    QTableView::item:selected {
+        background-color: #0078D4;
+        color: #FFFFFF;
+    }
+    QTableView QTableCornerButton::section {
+        background-color: #F0F0F0;
+        border-bottom: 1px solid #D0D0D0;
+    }
+
+    /* --- Widok drzewa (QTreeView/QTreeWidget) --- */
+    QTreeView {
+        background-color: #FFFFFF;
+        border: 1px solid #E0E0E0;
+        border-radius: 5px;
+        gridline-color: #F0F0F0;
+    }
+    QTreeView::item {
+        padding: 5px;
+        border: none;
+        color: #111111;
+    }
+    QTreeView::item:hover {
+        background-color: #E3F2FD;
+    }
+    QTreeView::item:selected {
+        background-color: #0078D4;
+        color: #FFFFFF;
+        outline: 0;
     }
 
     /* --- Paski przewijania (ScrollBars) --- */

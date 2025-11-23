@@ -69,6 +69,7 @@ class SettingsWindow(QDialog):
         self.is_flatpak = is_flatpak
         self.click_counter = 0
         self.image_worker = None # Do przechowywania referencji do wątku
+        self.diag_widgets = {} # Do przechowywania referencji do widżetów diagnostyki
         self.setWindowTitle("Ustawienia Programu")
         self.setMinimumWidth(650)
 
@@ -109,9 +110,37 @@ class SettingsWindow(QDialog):
         self.button_box.rejected.connect(self.reject)
         self.layout.addWidget(self.button_box)
 
+        # Flagi do leniwego ładowania
+        self.processing_tab_loaded = False
+        self.diagnostics_tab_loaded = False
+
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
         self.load_settings()
         self._load_presets_list() # Wczytaj presety do nowej zakładki
+        
+        # Uruchom ładowanie dla pierwszej widocznej zakładki
+        self._on_tab_changed(self.tabs.currentIndex())
+
+    def _on_tab_changed(self, index):
+        tab_widget = self.tabs.widget(index)
+        if tab_widget is self.processing_tab and not self.processing_tab_loaded:
+            self._populate_processing_tab()
+            self.processing_tab_loaded = True
+        elif tab_widget is self.diagnostics_tab and not self.diagnostics_tab_loaded:
+            self._populate_diagnostics_tab()
+            self.diagnostics_tab_loaded = True
+
+    def open_tab_by_name(self, tab_name):
+        for i in range(self.tabs.count()):
+            if self.tabs.tabText(i) == tab_name:
+                self.tabs.setCurrentIndex(i)
+                self._on_tab_changed(i)
+                return
+
+    def _populate_processing_tab(self):
         self._get_gpu_info()
+
 
     def _get_gpu_info(self):
         try:
@@ -242,7 +271,7 @@ class SettingsWindow(QDialog):
         self.preset_ffmpeg_group = QButtonGroup(self)
         self.preset_ffmpeg1 = QRadioButton("CPU (CRF)")
         self.preset_ffmpeg2 = QRadioButton("GPU (Nvidia CUDA)")
-        self.preset_ffmpeg3 = QRadioButton("GPU (Intel/AMD VA-API)")
+        self.preset_ffmpeg3 = QRadioButton("GPU (Intel VA-API)")
         self.preset_ffmpeg_group.addButton(self.preset_ffmpeg1, 1)
         self.preset_ffmpeg_group.addButton(self.preset_ffmpeg2, 2)
         self.preset_ffmpeg_group.addButton(self.preset_ffmpeg3, 3)
@@ -629,36 +658,30 @@ class SettingsWindow(QDialog):
         }
 
         for key, label_text in dependencies.items():
-            path = shutil.which(key)
-            
             h_layout = QHBoxLayout()
-            status_label = QLabel()
+            status_label = QLabel("...")
+            status_label.setToolTip("Oczekiwanie na sprawdzenie")
             path_edit = QLineEdit()
             path_edit.setReadOnly(True)
-
-            if path:
-                status_label.setText("✅")
-                status_label.setToolTip("Znaleziono")
-                path_edit.setText(path)
-            else:
-                status_label.setText("❌")
-                status_label.setToolTip("Nie znaleziono")
-                path_edit.setPlaceholderText("Brak programu w ścieżce systemowej (PATH)")
+            path_edit.setPlaceholderText("Oczekiwanie na sprawdzenie...")
             
             h_layout.addWidget(status_label)
             h_layout.addWidget(path_edit)
 
-            if self.is_windows and not path:
+            install_button = None
+            if self.is_windows:
                 install_button = QPushButton("Instaluj")
-                if key == "ffmpeg":
-                    install_button.clicked.connect(self.install_ffmpeg_winget)
-                elif key == "mkvmerge":
-                    install_button.clicked.connect(self.show_mkvtoolnix_instructions)
-                else:
-                    install_button.setVisible(False)
+                install_button.setEnabled(False)  # Domyślnie wyłączony
                 h_layout.addWidget(install_button)
 
             form_layout.addRow(label_text, h_layout)
+            
+            # Zapisz referencje do widżetów
+            self.diag_widgets[key] = {
+                "status": status_label,
+                "path": path_edit,
+                "button": install_button
+            }
 
         layout.addWidget(dependencies_group)
 
@@ -691,6 +714,36 @@ class SettingsWindow(QDialog):
             layout.addWidget(plugins_group)
 
         layout.addStretch()
+
+    def _populate_diagnostics_tab(self):
+        dependencies = {
+            "ffmpeg": "FFmpeg:",
+            "mkvmerge": "MKVToolNix:",
+            "ffprobe": "FFprobe:",
+        }
+        for key, _ in dependencies.items():
+            path = shutil.which(key)
+            widgets = self.diag_widgets[key]
+            
+            if path:
+                widgets["status"].setText("✅")
+                widgets["status"].setToolTip("Znaleziono")
+                widgets["path"].setText(path)
+                if widgets["button"]:
+                    widgets["button"].setEnabled(False)
+            else:
+                widgets["status"].setText("❌")
+                widgets["status"].setToolTip("Nie znaleziono")
+                widgets["path"].setPlaceholderText("Brak programu w ścieżce systemowej (PATH)")
+                if widgets["button"]:
+                    widgets["button"].setEnabled(True)
+                    # Podłącz sygnały dopiero tutaj, gdy przycisk jest potrzebny
+                    if key == "ffmpeg":
+                        widgets["button"].clicked.connect(self.install_ffmpeg_winget)
+                    elif key == "mkvmerge":
+                        widgets["button"].clicked.connect(self.show_mkvtoolnix_instructions)
+                    else:
+                        widgets["button"].setVisible(False)
 
     def _update_plugin_details(self, current, previous):
         if not current:

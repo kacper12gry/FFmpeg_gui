@@ -12,6 +12,7 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl
 from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices, QPalette, QColor
+from packaging.version import parse
 
 # Importy lokalnych modułów
 from process_manager import ProcessManager
@@ -53,6 +54,41 @@ def set_windows_titlebar_color(hwnd, color_mode):
         print(f"Nie udało się ustawić motywu paska tytułu Windows: {e}")
 
 
+# Słownik konfiguracyjny dla motywów
+THEME_CONFIG = {
+    "dark": {
+        "stylesheet": get_dark_theme_qss,
+        "titlebar": "dark",
+        "palette": {
+            QPalette.ColorRole.Window: QColor("#2b2b2b"),
+            QPalette.ColorRole.WindowText: QColor("#e0e0e0"),
+            QPalette.ColorRole.Highlight: QColor("#E67E22"),
+            QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
+        },
+    },
+    "pro_light": {
+        "stylesheet": get_professional_light_theme_qss,
+        "titlebar": "light",
+        "palette": {
+            QPalette.ColorRole.Window: QColor("#F0F0F0"),
+            QPalette.ColorRole.WindowText: QColor("#111111"),
+            QPalette.ColorRole.Highlight: QColor("#0078D4"),
+            QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
+        },
+    },
+    "light": {
+        "stylesheet": get_light_theme_qss,
+        "titlebar": "light",
+        "palette": None,
+    },
+    "system": {
+        "stylesheet": None,
+        "titlebar": "light",
+        "palette": None,
+    },
+}
+
+
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
         super().__init__()
@@ -92,20 +128,11 @@ class MainWindow(QMainWindow):
             self.version_checker.start()
 
     def handle_version_check_result(self, latest_version, release_url):
-        def parse_version(v):
-            v = v.lower().replace("v", "").replace("beta", ".").replace("dev", ".")
-            parts = []
-            for part in v.split('.'):
-                try:
-                    parts.append(int(part))
-                except ValueError:
-                    pass  # Ignore non-numeric parts
-            return tuple(parts)
-
         ignored_versions = self.settings.value("update_check/ignored", [], type=str)
 
-        current_v = parse_version(latest_release_tag)
-        latest_v = parse_version(latest_version)
+        # Użyj biblioteki packaging do niezawodnego porównywania wersji
+        current_v = parse(latest_release_tag)
+        latest_v = parse(latest_version)
 
         if latest_v > current_v and latest_version not in ignored_versions:
             msg_box = QMessageBox(self)
@@ -227,17 +254,19 @@ class MainWindow(QMainWindow):
         about_action.triggered.connect(self.show_about_dialog)
         menu_bar.addAction(about_action)
 
-    def open_settings_window(self, open_to_tab=None):
+    def open_settings_window(self, open_to_tab=None, open_to_tab_name=None):
         dialog = SettingsWindow(self.settings, self.plugin_manager, self.output_window, self, version=self.app_version, is_flatpak=self.is_flatpak)
         if open_to_tab is not None:
             dialog.tabs.setCurrentIndex(open_to_tab)
+        elif open_to_tab_name is not None:
+            dialog.open_tab_by_name(open_to_tab_name)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             if self.settings_changed:
                 self.load_settings()
                 self.settings_changed = False
 
     def open_diagnostics_tab(self):
-        self.open_settings_window(open_to_tab=3)
+        self.open_settings_window(open_to_tab_name="Diagnostyka")
 
     def load_settings(self):
         theme_name = self.settings.value("theme", "dark", type=str)
@@ -256,86 +285,56 @@ class MainWindow(QMainWindow):
         rpc_enabled = self.settings.value("discord_rpc_enabled", False, type=bool)
         self.discord_rpc_action.setChecked(rpc_enabled)
 
+    def _update_setting(self, key, value, callback=None):
+        """
+        Metoda pomocnicza do aktualizacji ustawienia, zapisania go i opcjonalnego wywołania funkcji zwrotnej.
+        """
+        self.settings.setValue(key, value)
+        self.settings.sync()
+        if callback:
+            callback(value)
+
     def open_component_selection_dialog(self):
         use_per_option_paths = self.use_per_option_paths_action.isChecked()
         dialog = ComponentSelectionDialog(use_per_option_paths, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             show_summary = self.settings.value("show_task_summary_confirmation", False, type=bool)
+            
+            tasks_to_add = dialog.tasks_to_return # Pobierz ujednoliconą listę zadań
 
-            # --- Logika dla zadań wsadowych ---
-            if dialog.batch_tasks:
-                # Dla zadań wsadowych podsumowanie jest niepraktyczne, dodajemy bezpośrednio
-                default_subtitle_name = self.settings.value("remux/subtitle_track_name", "")
-                for task_data in dialog.batch_tasks:
-                    (mkv_file, subtitle_file, font_folder, selected_script,
-                     selected_ffmpeg_script, gpu_bitrate, debug_mode,
-                     intro_file, output_path) = task_data
-                    
-                    self.task_manager.add_task(
-                        mkv_file, subtitle_file, font_folder,
-                        selected_script, selected_ffmpeg_script,
-                        gpu_bitrate, debug_mode, intro_file, output_path,
-                        subtitle_track_name=default_subtitle_name,
-                        movie_name=""
-                    )
-            # --- Logika dla pojedynczego zadania ---
-            else:
-                task_details = {
-                    "mkv_file": dialog.mkv_file,
-                    "subtitle_file": dialog.subtitle_file,
-                    "font_folder": dialog.font_folder,
-                    "selected_script": dialog.selected_script,
-                    "selected_ffmpeg_script": dialog.selected_ffmpeg_script,
-                    "gpu_bitrate": dialog.gpu_bitrate,
-                    "debug_mode": dialog.debug_mode,
-                    "intro_file": getattr(dialog, 'intro_file', None),
-                    "output_path": dialog.output_path,
-                    "subtitle_track_name": dialog.subtitle_track_name,
-                    "movie_name": dialog.movie_name
-                }
-
-                do_add_task = False
-                if show_summary:
-                    summary_dialog = TaskSummaryDialog(task_details, self)
+            if tasks_to_add: # Sprawdź, czy są jakieś zadania do dodania
+                # Obsłuż okno podsumowania tylko dla pojedynczych zadań, jeśli jest włączone
+                if len(tasks_to_add) == 1 and show_summary:
+                    summary_dialog = TaskSummaryDialog(tasks_to_add[0], self) # Przekaż słownik pojedynczego zadania
                     if summary_dialog.exec() == QDialog.DialogCode.Accepted:
-                        do_add_task = True
-                else:
-                    do_add_task = True
-
-                if do_add_task:
-                    self.task_manager.add_task(**task_details)
+                        for task_data in tasks_to_add:
+                            self.task_manager.add_task(**task_data)
+                else: # Dodaj wszystkie zadania bezpośrednio (wsadowe lub pojedyncze bez podsumowania)
+                    for task_data in tasks_to_add:
+                        self.task_manager.add_task(**task_data)
 
             if not self.process_manager.is_running():
                 self.process_manager.process_next_task()
 
     def apply_theme(self, theme_name, save=True):
         app = QApplication.instance()
+        
+        # Pobierz konfigurację motywu ze słownika, domyślnie 'system'
+        theme_config = THEME_CONFIG.get(theme_name, THEME_CONFIG["system"])
 
-        # Stwórz paletę, która jest wskazówką dla systemu i pasuje do motywu QSS
-        palette = QPalette()
-        if theme_name == "dark":
-            palette.setColor(QPalette.ColorRole.Window, QColor("#2b2b2b"))
-            palette.setColor(QPalette.ColorRole.WindowText, QColor("#e0e0e0"))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor("#E67E22")) # Użyj koloru akcentu z motywu
-            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-        elif theme_name == "pro_light":
-            palette.setColor(QPalette.ColorRole.Window, QColor("#F0F0F0"))
-            palette.setColor(QPalette.ColorRole.WindowText, QColor("#111111"))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor("#0078D4")) # Użyj koloru akcentu z motywu
-            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+        # Ustaw paletę kolorów
+        if theme_config["palette"]:
+            palette = QPalette()
+            for role, color in theme_config["palette"].items():
+                palette.setColor(role, color)
+            app.setPalette(palette)
         else:
-            # Dla motywu systemowego i Fusion, użyj domyślnej palety stylu
-            # To zapobiega nadpisywaniu kolorów systemowych
+            # Dla motywów 'system' i 'light', przywróć domyślną paletę
             original_style = QStyleFactory.create(self.original_style_name)
             if original_style:
                 app.setPalette(original_style.standardPalette())
 
-        if theme_name in ["dark", "pro_light"]:
-            app.setPalette(palette)
-
-        # Zastosuj arkusz stylów i specyficzną logikę dla Windows
-        QApplication.setStyle(QStyleFactory.create("Fusion"))
-
+        # Ustaw styl i arkusz stylów
         if theme_name == "system":
             style_engine = self.settings.value("style_engine", "default", type=str)
             style_to_apply = self.original_style_name if style_engine == "default" else style_engine
@@ -343,34 +342,29 @@ class MainWindow(QMainWindow):
                 style_to_apply = self.original_style_name
             QApplication.setStyle(style_to_apply)
             app.setStyleSheet(self.original_stylesheet)
-            set_windows_titlebar_color(self.winId(), 'light')
+        else:
+            QApplication.setStyle(QStyleFactory.create("Fusion"))
+            stylesheet_func = theme_config["stylesheet"]
+            if stylesheet_func:
+                app.setStyleSheet(stylesheet_func())
 
-        elif theme_name == "dark":
-            app.setStyleSheet(get_dark_theme_qss())
-            set_windows_titlebar_color(self.winId(), 'dark')
-        elif theme_name == "pro_light":
-            app.setStyleSheet(get_professional_light_theme_qss())
-            set_windows_titlebar_color(self.winId(), 'light')
-        elif theme_name == "light":
-            app.setStyleSheet(get_light_theme_qss())
-            set_windows_titlebar_color(self.winId(), 'light')
+        # Ustaw kolor paska tytułu dla Windows
+        set_windows_titlebar_color(self.winId(), theme_config["titlebar"])
         
+        # Zapisz ustawienie
         if save:
             self.settings.setValue("theme", theme_name)
             self.settings.sync()
 
     def toggle_detailed_view(self, checked):
-        self.task_manager.set_detailed_view(checked)
-        self.settings.setValue("detailed_view", checked)
-        self.settings.sync() # POPRAWKA: Wymuś zapis
+        self._update_setting("detailed_view", checked, self.task_manager.set_detailed_view)
 
     def toggle_discord_rpc(self, checked):
         if checked:
             self.rpc_manager.start()
         else:
             self.rpc_manager.stop()
-        self.settings.setValue("discord_rpc_enabled", checked)
-        self.settings.sync() # POPRAWKA: Wymuś zapis
+        self._update_setting("discord_rpc_enabled", checked)
 
     def closeEvent(self, event):
         if self.process_manager.is_running():
