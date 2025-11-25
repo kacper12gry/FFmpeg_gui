@@ -28,67 +28,6 @@ from task_summary_dialog import TaskSummaryDialog
 
 from _version import __version__, latest_release_tag
 
-def set_windows_titlebar_color(hwnd, color_mode):
-    """Ustawia kolor paska tytułu dla okna w systemie Windows 10/11."""
-    if platform.system() != 'Windows':
-        return
-
-    try:
-        from ctypes import wintypes, windll, byref
-        # Dokumentacja Microsoft dla DwmSetWindowAttribute:
-        # https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute
-        # DWMWA_USE_IMMERSIVE_DARK_MODE = 20 (przed Windows 11 22H2)
-        # DWMWA_SYSTEMBACKDROP_TYPE = 38
-        
-        # Wartość 1 = Ciemny, 0 = Jasny
-        value = wintypes.DWORD(1 if color_mode == 'dark' else 0)
-        
-        # Próba ustawienia atrybutu dla Windows 11 (nowsze API)
-        # DWMWA_SYSTEMBACKDROP_TYPE, 2 = Mica Alt
-        # windll.dwmapi.DwmSetWindowAttribute(hwnd, 38, byref(wintypes.DWORD(2)), 4)
-
-        # Ustawienie atrybutu dla trybu ciemnego (działa na Win10 i Win11)
-        windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, byref(value), 4)
-
-    except Exception as e:
-        print(f"Nie udało się ustawić motywu paska tytułu Windows: {e}")
-
-
-# Słownik konfiguracyjny dla motywów
-THEME_CONFIG = {
-    "dark": {
-        "stylesheet": get_dark_theme_qss,
-        "titlebar": "dark",
-        "palette": {
-            QPalette.ColorRole.Window: QColor("#2b2b2b"),
-            QPalette.ColorRole.WindowText: QColor("#e0e0e0"),
-            QPalette.ColorRole.Highlight: QColor("#E67E22"),
-            QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
-        },
-    },
-    "pro_light": {
-        "stylesheet": get_professional_light_theme_qss,
-        "titlebar": "light",
-        "palette": {
-            QPalette.ColorRole.Window: QColor("#F0F0F0"),
-            QPalette.ColorRole.WindowText: QColor("#111111"),
-            QPalette.ColorRole.Highlight: QColor("#0078D4"),
-            QPalette.ColorRole.HighlightedText: QColor("#ffffff"),
-        },
-    },
-    "light": {
-        "stylesheet": get_light_theme_qss,
-        "titlebar": "light",
-        "palette": None,
-    },
-    "system": {
-        "stylesheet": None,
-        "titlebar": "light",
-        "palette": None,
-    },
-}
-
-
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
         super().__init__()
@@ -144,7 +83,7 @@ class MainWindow(QMainWindow):
                 f"<br><a href=\"{release_url}\">{release_url}</a>"
             )
             msg_box.setIcon(QMessageBox.Icon.Information)
-            
+
             yes_button = msg_box.addButton("Tak", QMessageBox.ButtonRole.YesRole)
             msg_box.addButton("Nie", QMessageBox.ButtonRole.NoRole)
             msg_box.setDefaultButton(yes_button)
@@ -206,7 +145,7 @@ class MainWindow(QMainWindow):
     def create_menu_bar(self):
         menu_bar = self.menuBar()
         options_menu = menu_bar.addMenu("Opcje")
-        
+
         settings_action = QAction("Ustawienia...", self)
         settings_action.triggered.connect(self.open_settings_window)
         options_menu.addAction(settings_action)
@@ -299,7 +238,7 @@ class MainWindow(QMainWindow):
         dialog = ComponentSelectionDialog(use_per_option_paths, self)
         if dialog.exec() == QDialog.DialogCode.Accepted:
             show_summary = self.settings.value("show_task_summary_confirmation", False, type=bool)
-            
+
             tasks_to_add = dialog.tasks_to_return # Pobierz ujednoliconą listę zadań
 
             if tasks_to_add: # Sprawdź, czy są jakieś zadania do dodania
@@ -318,15 +257,21 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self, theme_name, save=True):
         app = QApplication.instance()
-        
-        # Pobierz konfigurację motywu ze słownika, domyślnie 'system'
-        theme_config = THEME_CONFIG.get(theme_name, THEME_CONFIG["system"])
 
         # Ustaw paletę kolorów
-        if theme_config["palette"]:
+        if theme_name == "dark":
             palette = QPalette()
-            for role, color in theme_config["palette"].items():
-                palette.setColor(role, color)
+            palette.setColor(QPalette.ColorRole.Window, QColor("#2b2b2b"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#e0e0e0"))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor("#E67E22"))
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
+            app.setPalette(palette)
+        elif theme_name == "pro_light":
+            palette = QPalette()
+            palette.setColor(QPalette.ColorRole.Window, QColor("#F0F0F0"))
+            palette.setColor(QPalette.ColorRole.WindowText, QColor("#111111"))
+            palette.setColor(QPalette.ColorRole.Highlight, QColor("#0078D4"))
+            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
             app.setPalette(palette)
         else:
             # Dla motywów 'system' i 'light', przywróć domyślną paletę
@@ -342,15 +287,16 @@ class MainWindow(QMainWindow):
                 style_to_apply = self.original_style_name
             QApplication.setStyle(style_to_apply)
             app.setStyleSheet(self.original_stylesheet)
-        else:
+        elif theme_name == "dark":
             QApplication.setStyle(QStyleFactory.create("Fusion"))
-            stylesheet_func = theme_config["stylesheet"]
-            if stylesheet_func:
-                app.setStyleSheet(stylesheet_func())
+            app.setStyleSheet(get_dark_theme_qss())
+        elif theme_name == "pro_light":
+            QApplication.setStyle(QStyleFactory.create("Fusion"))
+            app.setStyleSheet(get_professional_light_theme_qss())
+        elif theme_name == "light":
+            QApplication.setStyle(QStyleFactory.create("Fusion"))
+            app.setStyleSheet(get_light_theme_qss())
 
-        # Ustaw kolor paska tytułu dla Windows
-        set_windows_titlebar_color(self.winId(), theme_config["titlebar"])
-        
         # Zapisz ustawienie
         if save:
             self.settings.setValue("theme", theme_name)
@@ -401,7 +347,7 @@ class MainWindow(QMainWindow):
         if not task:
             return
         is_active = selected_row == 0 and self.process_manager.is_running()
-        
+
         msg_box = QMessageBox(self)
         msg_box.setIcon(QMessageBox.Icon.Question)
         msg_box.setWindowTitle("Potwierdzenie")
@@ -430,9 +376,6 @@ class MainWindow(QMainWindow):
         )
         # Użyj timera, aby ukryć ikonę po chwili
         QTimer.singleShot(6000, self.tray_icon.hide)
-
-
-
 
 
     def show_about_dialog(self):
