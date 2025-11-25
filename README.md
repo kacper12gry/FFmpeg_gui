@@ -10,7 +10,7 @@ Główne funkcje:
 
 Zależność:
 ```bash
-pip install PyQt6
+pip install PyQt6 packaging
 
 ```
 Uruchomienie:
