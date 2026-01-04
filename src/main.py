@@ -40,7 +40,7 @@ class MainWindow(QMainWindow):
         self.setWindowIcon(QIcon("icon/icon.svg"))
         self.settings = QSettings("settings.ini", QSettings.Format.IniFormat)
         self.settings_changed = False
-
+        
         self.plugin_manager = PluginManager(self)
         self.plugin_manager.scan_for_plugins()
 
@@ -48,6 +48,7 @@ class MainWindow(QMainWindow):
         self.rpc_manager = DiscordRPCManager(app_id='1407826664381087896')
         self.task_manager = TaskManager(self.task_list, None, self.rpc_manager)
         self.process_manager = ProcessManager(self.task_manager, self.output_window, self.rpc_manager, debug_mode=False)
+        
         self.task_manager.process_manager = self.process_manager
         self.rpc_manager.task_manager = self.task_manager
         self.process_manager.eta_updated.connect(self.update_eta_display)
@@ -101,6 +102,16 @@ class MainWindow(QMainWindow):
                 self.settings.setValue("update_check/ignored", ignored_versions)
 
     def setup_ui(self):
+        # Pobierz preferowany układ z ustawień
+        self.current_layout_type = self.settings.value("ui_layout", "classic", type=str)
+        
+        # Dostosuj rozmiar okna do układu
+        if self.current_layout_type == "dashboard":
+            self.resize(1400, 800)
+        else:
+            self.resize(700, 500)
+        
+        # Główne widżety (wspólne dla obu układów)
         self.button = QPushButton("Otwórz okno wyboru komponentów", self)
         self.refresh_button = QPushButton("Odśwież", self)
         self.refresh_button.setMaximumWidth(100)
@@ -111,36 +122,88 @@ class MainWindow(QMainWindow):
         self.cancel_button = QPushButton("Anuluj wybrane zadanie", self)
         self.eta_label = QLabel("Czas do końca: -")
         self.eta_label.setVisible(False)
-        task_controls_layout = QHBoxLayout()
-        task_controls_layout.addWidget(self.cancel_button)
-        task_controls_layout.addStretch()
-        task_controls_layout.addWidget(self.eta_label)
-        button_layout = QHBoxLayout()
-        button_layout.addWidget(self.button)
-        button_layout.addWidget(self.refresh_button)
-        task_group = QGroupBox("Kolejka Zadań")
-        task_layout = QVBoxLayout()
-        task_layout.addWidget(self.task_list)
-        task_layout.addLayout(task_controls_layout)
-        task_group.setLayout(task_layout)
-        log_group = QGroupBox("Log Przetwarzania")
-        log_layout = QVBoxLayout()
-        log_layout.addWidget(self.output_window)
-        log_group.setLayout(log_layout)
-        splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.addWidget(task_group)
-        splitter.addWidget(log_group)
-        splitter.setStretchFactor(1, 2)
-        splitter.setSizes([200, 300])
-        main_layout = QVBoxLayout()
-        main_layout.addLayout(button_layout)
-        main_layout.addWidget(splitter)
-        container = QWidget()
-        container.setLayout(main_layout)
-        self.setCentralWidget(container)
+
+        # Kontener główny
+        self.main_container = QWidget()
+        self.setCentralWidget(self.main_container)
+        
+        # Wywołaj budowanie konkretnego układu
+        self._build_layout()
+
+        # Połącz sygnały (tylko raz)
         self.button.clicked.connect(self.open_component_selection_dialog)
         self.refresh_button.clicked.connect(self.refresh_program)
         self.cancel_button.clicked.connect(self.show_cancel_confirmation)
+
+    def _build_layout(self):
+        """Buduje strukturę UI w zależności od wybranego trybu."""
+        main_layout = QVBoxLayout(self.main_container)
+        main_layout.setContentsMargins(5, 5, 5, 5)
+        main_layout.setSpacing(5)
+
+        # Grupy widżetów
+        task_group = QGroupBox("Kolejka Zadań")
+        task_layout = QVBoxLayout(task_group)
+        task_layout.addWidget(self.task_list)
+        
+        task_controls = QHBoxLayout()
+        task_controls.addWidget(self.cancel_button)
+        task_controls.addStretch()
+        task_controls.addWidget(self.eta_label)
+        task_layout.addLayout(task_controls)
+
+        log_group = QGroupBox("Log Przetwarzania")
+        log_layout = QVBoxLayout(log_group)
+        log_layout.addWidget(self.output_window)
+
+        if self.current_layout_type == "dashboard":
+            # --- UKŁAD ROZBUDOWANY (DASHBOARD) ---
+            h_layout = QHBoxLayout()
+            
+            # Lewy pasek boczny (Nawigacja i Statystyki)
+            sidebar = QVBoxLayout()
+            sidebar.setSpacing(10)
+            
+            nav_group = QGroupBox("Akcje")
+            nav_layout = QVBoxLayout(nav_group)
+            self.button.setText("Dodaj zadanie") # Krótszy tekst dla paska bocznego
+            nav_layout.addWidget(self.button)
+            nav_layout.addWidget(self.refresh_button)
+            sidebar.addWidget(nav_group)
+            
+            stats_group = QGroupBox("Statystyki sesji")
+            stats_layout = QVBoxLayout(stats_group)
+            self.stats_version_label = QLabel(f"Wersja: {self.app_version}")
+            self.stats_os_label = QLabel(f"System: {platform.system()}")
+            stats_layout.addWidget(self.stats_version_label)
+            stats_layout.addWidget(self.stats_os_label)
+            sidebar.addWidget(stats_group)
+            sidebar.addStretch()
+            
+            h_layout.addLayout(sidebar, 0)
+            
+            # Splitter dla logów i zadań
+            self.splitter = QSplitter(Qt.Orientation.Horizontal)
+            self.splitter.addWidget(log_group)
+            self.splitter.addWidget(task_group)
+            self.splitter.setStretchFactor(0, 1) # Logi 50%
+            self.splitter.setStretchFactor(1, 1) # Zadania 50%
+            
+            h_layout.addWidget(self.splitter, 1)
+            main_layout.addLayout(h_layout)
+        else:
+            # --- UKŁAD KLASYCZNY ---
+            self.button.setText("Otwórz okno wyboru komponentów")
+            button_layout = QHBoxLayout()
+            button_layout.addWidget(self.button)
+            button_layout.addWidget(self.refresh_button)
+            main_layout.addLayout(button_layout)
+
+            self.splitter = QSplitter(Qt.Orientation.Vertical)
+            self.splitter.addWidget(task_group)
+            self.splitter.addWidget(log_group)
+            self.splitter.setStretchFactor(1, 2)
+            main_layout.addWidget(self.splitter)
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -150,6 +213,23 @@ class MainWindow(QMainWindow):
         settings_action.triggered.connect(self.open_settings_window)
         options_menu.addAction(settings_action)
         options_menu.addSeparator()
+
+        layout_menu = options_menu.addMenu("Układ")
+        self.layout_group = QActionGroup(self)
+        classic_action = QAction("Klasyczny (Pionowy)", self, checkable=True)
+        dashboard_action = QAction("Panel sterowania (Poziomy)", self, checkable=True)
+        
+        curr_layout = self.settings.value("ui_layout", "classic", type=str)
+        classic_action.setChecked(curr_layout == "classic")
+        dashboard_action.setChecked(curr_layout == "dashboard")
+        
+        classic_action.triggered.connect(lambda: self.change_layout("classic"))
+        dashboard_action.triggered.connect(lambda: self.change_layout("dashboard"))
+        
+        self.layout_group.addAction(classic_action)
+        self.layout_group.addAction(dashboard_action)
+        layout_menu.addAction(classic_action)
+        layout_menu.addAction(dashboard_action)
 
         theme_menu = options_menu.addMenu("Motyw")
         self.theme_group = QActionGroup(self)
@@ -258,27 +338,6 @@ class MainWindow(QMainWindow):
     def apply_theme(self, theme_name, save=True):
         app = QApplication.instance()
 
-        # Ustaw paletę kolorów
-        if theme_name == "dark":
-            palette = QPalette()
-            palette.setColor(QPalette.ColorRole.Window, QColor("#2b2b2b"))
-            palette.setColor(QPalette.ColorRole.WindowText, QColor("#e0e0e0"))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor("#E67E22"))
-            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-            app.setPalette(palette)
-        elif theme_name == "pro_light":
-            palette = QPalette()
-            palette.setColor(QPalette.ColorRole.Window, QColor("#F0F0F0"))
-            palette.setColor(QPalette.ColorRole.WindowText, QColor("#111111"))
-            palette.setColor(QPalette.ColorRole.Highlight, QColor("#0078D4"))
-            palette.setColor(QPalette.ColorRole.HighlightedText, QColor("#ffffff"))
-            app.setPalette(palette)
-        else:
-            # Dla motywów 'system' i 'light', przywróć domyślną paletę
-            original_style = QStyleFactory.create(self.original_style_name)
-            if original_style:
-                app.setPalette(original_style.standardPalette())
-
         # Ustaw styl i arkusz stylów
         if theme_name == "system":
             style_engine = self.settings.value("style_engine", "default", type=str)
@@ -290,17 +349,31 @@ class MainWindow(QMainWindow):
         elif theme_name == "dark":
             QApplication.setStyle(QStyleFactory.create("Fusion"))
             app.setStyleSheet(get_dark_theme_qss())
+            self._update_windows_titlebar(dark_mode=True)
         elif theme_name == "pro_light":
             QApplication.setStyle(QStyleFactory.create("Fusion"))
             app.setStyleSheet(get_professional_light_theme_qss())
+            self._update_windows_titlebar(dark_mode=False)
         elif theme_name == "light":
             QApplication.setStyle(QStyleFactory.create("Fusion"))
             app.setStyleSheet(get_light_theme_qss())
+            self._update_windows_titlebar(dark_mode=False)
 
         # Zapisz ustawienie
         if save:
             self.settings.setValue("theme", theme_name)
             self.settings.sync()
+
+    def _update_windows_titlebar(self, dark_mode=True):
+        """Wymusza ciemny/jasny pasek tytułu na Windows."""
+        if platform.system() != "Windows": return
+        try:
+            import ctypes
+            hwnd = int(self.winId())
+            # DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(hwnd, 20, ctypes.byref(ctypes.c_int(1 if dark_mode else 0)), 4)
+            ctypes.windll.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0027)
+        except Exception: pass
 
     def toggle_detailed_view(self, checked):
         self._update_setting("detailed_view", checked, self.task_manager.set_detailed_view)
@@ -313,7 +386,7 @@ class MainWindow(QMainWindow):
         self._update_setting("discord_rpc_enabled", checked)
 
     def closeEvent(self, event):
-        if self.process_manager.is_running():
+        if hasattr(self, 'process_manager') and self.process_manager.is_running():
             msg_box = QMessageBox(self)
             msg_box.setIcon(QMessageBox.Icon.Question)
             msg_box.setWindowTitle("Potwierdzenie zamknięcia")
@@ -326,8 +399,18 @@ class MainWindow(QMainWindow):
             if msg_box.clickedButton() == no_button:
                 event.ignore()
                 return
-        self.process_manager.kill_process()
-        self.rpc_manager.stop()
+
+        # Szybkie czyszczenie zasobów
+        if hasattr(self, 'version_checker') and self.version_checker.isRunning():
+            self.version_checker.quit()
+            self.version_checker.wait(500) # Max 0.5s na zamknięcie sieci
+
+        if hasattr(self, 'process_manager'):
+            self.process_manager.kill_process()
+            
+        if hasattr(self, 'rpc_manager'):
+            self.rpc_manager.stop()
+            
         super().closeEvent(event)
 
     def update_eta_display(self, seconds):
@@ -392,6 +475,25 @@ class MainWindow(QMainWindow):
     def refresh_program(self):
         self.close()
         QProcess.startDetached(sys.executable, sys.argv)
+
+    def change_layout(self, layout_type):
+        """Zmienia typ układu i informuje o konieczności restartu."""
+        if self.current_layout_type == layout_type:
+            return
+            
+        self.settings.setValue("ui_layout", layout_type)
+        self.settings.sync()
+        
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("Zmiana układu")
+        msg.setText("Zmiana układu interfejsu wymaga ponownego uruchomienia programu.")
+        restart_btn = msg.addButton("Uruchom ponownie teraz", QMessageBox.ButtonRole.AcceptRole)
+        msg.addButton("Później", QMessageBox.ButtonRole.RejectRole)
+        msg.exec()
+        
+        if msg.clickedButton() == restart_btn:
+            self.refresh_program()
 
 if __name__ == "__main__":
     QGuiApplication.setDesktopFileName('pl.com.github.kacper12gry.automatyzer')

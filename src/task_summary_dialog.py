@@ -43,7 +43,8 @@ class TaskSummaryDialog(QDialog):
         ffmpeg_script_map = {
             1: "CPU",
             2: "GPU (Nvidia CUDA)",
-            3: "GPU (Intel/AMD VA-API)"
+            3: "GPU (Intel/AMD VA-API)",
+            4: "GPU (Intel i AMD VA-API AV1)"
         }
 
         html = "<h3>Czy na pewno chcesz dodać to zadanie?</h3>"
@@ -64,10 +65,15 @@ class TaskSummaryDialog(QDialog):
         if selected_script in [1, 2, 4]:
             ffmpeg_script = ffmpeg_script_map.get(data.get('selected_ffmpeg_script'), '<i>Nieznany</i>')
             html += f"<li><b>Enkoder FFmpeg:</b> {ffmpeg_script}</li>"
-            if data.get('selected_ffmpeg_script') in [2, 3] or selected_script == 4:
+            if data.get('selected_ffmpeg_script') in [2, 3, 4]:
                 html += f"<li><b>Bitrate:</b> {data.get('gpu_bitrate')} Mbps</li>"
 
         if selected_script in [2, 3]:
+            # Audio Track Info
+            audio_id = data.get('selected_audio_track_id')
+            if audio_id is not None:
+                html += f"<li><b>ID ścieżki audio:</b> {audio_id}</li>"
+
             if data.get('subtitle_track_name'):
                  html += f"<li><b>Nazwa ścieżki napisów:</b> {data.get('subtitle_track_name')}</li>"
             if data.get('movie_name', '').strip():

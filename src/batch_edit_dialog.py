@@ -9,7 +9,7 @@ from pathlib import Path
 from dataclasses import make_dataclass, astuple
 
 # Zaktualizowana struktura danych, zawiera teraz listę ostrzeżeń
-TaskData = make_dataclass("TaskData", ["mkv", "sub", "font", "script", "ffmpeg", "bitrate", "debug", "intro", "output", "warnings"])
+TaskData = make_dataclass("TaskData", ["mkv", "sub", "font", "script", "ffmpeg", "bitrate", "debug", "intro", "output", "warnings", "audio"])
 
 class BatchEditDialog(QDialog):
     def __init__(self, tasks_data, parent=None, batch_import_logic=None):
@@ -17,7 +17,15 @@ class BatchEditDialog(QDialog):
         self.setWindowTitle("Podsumowanie i Edycja Importowanych Zadań")
         self.setMinimumSize(1000, 600)
 
-        self.tasks = [TaskData(*task) for task in tasks_data]
+        # Mapuj dane wejściowe na TaskData (obsługa starego formatu bez audio)
+        self.tasks = []
+        for task in tasks_data:
+            if len(task) < 11:
+                # Jeśli brakuje pola audio (np. stary import), dodaj None (czyli domyślne ID 1)
+                self.tasks.append(TaskData(*(list(task) + [None])))
+            else:
+                self.tasks.append(TaskData(*task))
+
         self.batch_import_logic = batch_import_logic
 
         self._setup_ui()
@@ -92,6 +100,8 @@ class BatchEditDialog(QDialog):
         self.sub_edit = self._create_path_widget(is_file=True, file_filter="ASS Files (*.ass)")
         self.font_edit = self._create_path_widget(is_file=False)
         self.intro_edit = self._create_path_widget(is_file=True, file_filter="Video Files (*.mp4 *.mkv)")
+        self.audio_spin = QSpinBox()
+        self.audio_spin.setRange(0, 99)
         self.script_combo = self._create_script_combo()
         self.encoder_combo = self._create_encoder_combo()
         self.bitrate_spin = self._create_bitrate_spinbox()
@@ -101,6 +111,7 @@ class BatchEditDialog(QDialog):
         self.form_layout.addRow("Napisy:", self.sub_edit)
         self.form_layout.addRow("Czcionki:", self.font_edit)
         self.form_layout.addRow("Wstawka:", self.intro_edit)
+        self.form_layout.addRow("Audio ID:", self.audio_spin)
         self.form_layout.addRow("Skrypt:", self.script_combo)
         self.form_layout.addRow("Enkoder:", self.encoder_combo)
         self.form_layout.addRow("Bitrate:", self.bitrate_spin)
@@ -154,8 +165,9 @@ class BatchEditDialog(QDialog):
         self.sub_edit.findChild(QLineEdit).setText(str(task.sub) if task.sub else "")
         self.font_edit.findChild(QLineEdit).setText(str(task.font) if task.font else "")
         self.intro_edit.findChild(QLineEdit).setText(str(task.intro) if task.intro else "")
+        self.audio_spin.setValue(task.audio if task.audio is not None else 1)
         self.script_combo.setCurrentIndex(task.script - 1 if 1 <= task.script <= 4 else 2)
-        self.encoder_combo.setCurrentIndex(task.ffmpeg - 1 if 1 <= task.ffmpeg <= 3 else 0)
+        self.encoder_combo.setCurrentIndex(task.ffmpeg - 1 if 1 <= task.ffmpeg <= 4 else 0)
         self.bitrate_spin.setValue(task.bitrate)
         self.debug_check.setChecked(task.debug)
 
@@ -191,7 +203,8 @@ class BatchEditDialog(QDialog):
             debug=self.debug_check.isChecked(),
             intro=Path(intro_path) if intro_path else None,
             output=task_to_update.output, # Zachowaj oryginalne wartości
-            warnings=task_to_update.warnings
+            warnings=task_to_update.warnings,
+            audio=self.audio_spin.value()
         )
         self.tasks[task_index] = updated_task
         
@@ -299,7 +312,7 @@ class BatchEditDialog(QDialog):
 
     def _create_encoder_combo(self):
         combo = QComboBox()
-        combo.addItems(["1: CPU (CRF)", "2: GPU (Nvidia CUDA)", "3: GPU (Intel/AMD VA-API)"])
+        combo.addItems(["1: CPU (CRF)", "2: GPU (Nvidia CUDA)", "3: GPU (Intel/AMD VA-API)", "4: GPU (Intel/AMD VA-API AV1)"])
         return combo
 
     def _create_bitrate_spinbox(self):

@@ -2,6 +2,8 @@
 
 import os
 import platform
+import json
+import subprocess
 from pathlib import Path
 from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QFileDialog,
                              QRadioButton, QButtonGroup, QSpinBox, QCheckBox,
@@ -189,12 +191,14 @@ class ComponentSelectionDialog(QDialog):
         self.ffmpeg_script_label = QLabel("Wybierz skrypt FFmpeg (dla opcji z FFmpeg):")
         self.script1_radio = QRadioButton("CPU (CRF)")
         self.script2_radio = QRadioButton("GPU (Nvidia CUDA)")
-        self.script3_radio = QRadioButton("GPU (Intel VA-API)")
+        self.script3_radio = QRadioButton("GPU (Intel i AMD VA-API H264)")
+        self.script4_radio = QRadioButton("GPU (Intel i AMD VA-API AV1)")
         self.script1_radio.setChecked(True)
         self.script_button_group = QButtonGroup()
         self.script_button_group.addButton(self.script1_radio, 1)
         self.script_button_group.addButton(self.script2_radio, 2)
         self.script_button_group.addButton(self.script3_radio, 3)
+        self.script_button_group.addButton(self.script4_radio, 4)
 
         bitrate_layout = QHBoxLayout()
         self.bitrate_label = QLabel("Bitrate (Mbps):")
@@ -208,6 +212,7 @@ class ComponentSelectionDialog(QDialog):
         ffmpeg_layout.addWidget(self.script1_radio)
         ffmpeg_layout.addWidget(self.script2_radio)
         ffmpeg_layout.addWidget(self.script3_radio)
+        ffmpeg_layout.addWidget(self.script4_radio)
         ffmpeg_layout.addLayout(bitrate_layout)
 
         self.encoder_warning_label = QLabel("")
@@ -238,6 +243,16 @@ class ComponentSelectionDialog(QDialog):
         movie_name_layout.addWidget(self.movie_name_edit)
         remux_layout.addLayout(movie_name_layout)
 
+        audio_track_layout = QHBoxLayout()
+        self.audio_track_label = QLabel("Ścieżka audio do zostawienia:")
+        self.audio_track_combo = QComboBox()
+        self.audio_track_combo.setPlaceholderText("Wybierz ścieżkę audio...")
+        self.audio_track_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToContents)
+        self.audio_track_combo.view().setMinimumWidth(350) # Minimalna szerokość popupu
+        audio_track_layout.addWidget(self.audio_track_label)
+        audio_track_layout.addWidget(self.audio_track_combo, 1)
+        remux_layout.addLayout(audio_track_layout)
+
         advanced_tab_layout.addWidget(remux_group)
 
 
@@ -266,7 +281,7 @@ class ComponentSelectionDialog(QDialog):
         self.intro_button.clicked.connect(self.select_intro_file)
         self.subtitle_button.clicked.connect(self.select_subtitle_file)
         self.font_button.clicked.connect(self.select_font_folder)
-        self.button_group.buttonClicked.connect(self.update_ui_state)
+        self.button_group.buttonClicked.connect(self._on_main_script_changed)
         self.button_group.buttonClicked.connect(self._on_script_option_changed)
         self.script_button_group.buttonClicked.connect(self.update_ui_state)
 
@@ -347,22 +362,52 @@ class ComponentSelectionDialog(QDialog):
         self.suffix_group.setEnabled(use_custom_output)
 
     def _update_ffmpeg_encoder_state(self, selected_id):
-        """Aktualizuje stan opcji enkodera FFmpeg i bitrate."""
-        ffmpeg_encoder_id = self.script_button_group.checkedId()
+        """Aktualizuje WIDOCZNOŚĆ I STAN opcji enkodera FFmpeg, ale NIE ZMIENIA aktywnego przycisku."""
         ffmpeg_encoder_options_enabled = selected_id in [1, 2, 4]
-        is_gpu_selected = ffmpeg_encoder_options_enabled and ffmpeg_encoder_id in [2, 3]
-        bitrate_is_relevant = is_gpu_selected or (selected_id == 4) # Bitrate dla GPU lub wstawki
         
         self.ffmpeg_script_label.setEnabled(ffmpeg_encoder_options_enabled)
+
+        # Ustawienie widoczności (zależnie od platformy) i stanu (zależnie od wybranego skryptu)
+        self.script1_radio.setVisible(True) # CPU zawsze widoczne
+        self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
+
+        self.script2_radio.setVisible(not self.is_flatpak)
+        self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak)
+
+        self.script3_radio.setVisible(not self.is_flatpak and not self.is_windows)
+        self.script3_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak and not self.is_windows)
+        
+        self.script4_radio.setVisible(not self.is_flatpak and not self.is_windows)
+        self.script4_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak and not self.is_windows)
+
+        # Aktualizacja kontrolek bitrate
+        ffmpeg_encoder_id = self.script_button_group.checkedId()
+        is_gpu_script_selected = ffmpeg_encoder_id in [2, 3, 4]
+        bitrate_is_relevant = ffmpeg_encoder_options_enabled and is_gpu_script_selected
+
         self.bitrate_label.setEnabled(bitrate_is_relevant)
         self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
 
-        self.script1_radio.setEnabled(ffmpeg_encoder_options_enabled)
-        self.script2_radio.setVisible(not self.is_flatpak)
-        self.script2_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak)
-        self.script3_radio.setVisible(not self.is_flatpak and not self.is_windows)
-        self.script3_radio.setEnabled(ffmpeg_encoder_options_enabled and not self.is_flatpak and not self.is_windows)
         self.movie_name_edit.setDisabled(self.movie_name_checkbox.isChecked())
+
+    def _on_main_script_changed(self):
+        """Wywoływane po zmianie głównego skryptu, aby zresetować wybór enkodera FFmpeg w razie potrzeby."""
+        self.update_ui_state() # Najpierw zaktualizuj całe UI, aby mieć poprawną widoczność
+
+        ffmpeg_encoder_options_enabled = self.button_group.checkedId() in [1, 2, 4]
+        current_checked_button = self.script_button_group.checkedButton()
+
+        # Jeśli grupa enkoderów jest aktywna, ale żaden przycisk nie jest wybrany
+        # lub wybrany przycisk jest teraz niewidoczny/nieaktywny, wybierz domyślny.
+        if ffmpeg_encoder_options_enabled:
+            if not current_checked_button or not current_checked_button.isVisible() or not current_checked_button.isEnabled():
+                self.script1_radio.setChecked(True)
+        # Jeśli grupa enkoderów została wyłączona, odznacz przycisk, aby uniknąć niespójności
+        elif current_checked_button:
+            # Używamy setExclusive(False), aby móc odznaczyć przycisk w grupie
+            self.script_button_group.setExclusive(False)
+            current_checked_button.setChecked(False)
+            self.script_button_group.setExclusive(True)
 
     def _update_remux_group_state(self, selected_id):
         """Aktualizuje widoczność i stan grupy ustawień remuxa."""
@@ -375,12 +420,22 @@ class ComponentSelectionDialog(QDialog):
         """Aktualizuje domyślną nazwę wyjściową i wyświetla ostrzeżenia."""
         if not self.custom_output_checkbox.isChecked():
             self.output_name_edit.setText(self._generate_default_output_name())
+        else:
+            # Jeśli użytkownik ma własną nazwę, upewnij się, że rozszerzenie pasuje do trybu
+            current_text = self.output_name_edit.text()
+            if current_text:
+                p = Path(current_text)
+                target_ext = ".mp4" if selected_id in [1, 4] else ".mkv"
+                # Zmień rozszerzenie tylko jeśli jest inne i nazwa nie kończy się już poprawnie
+                if p.suffix.lower() != target_ext:
+                    new_text = f"{p.stem}{target_ext}"
+                    self.output_name_edit.setText(new_text)
 
         warning_text = ""
         ffmpeg_encoder_id = self.script_button_group.checkedId()
-        if selected_id == 4 and ffmpeg_encoder_id in [2, 3]:
+        if selected_id == 4 and ffmpeg_encoder_id in [2, 3, 4]:
             warning_text = "Opcja GPU dla skryptu z wstawką jest EKSPERYMENTALNA."
-        elif selected_id in [1, 2] and ffmpeg_encoder_id == 3:
+        elif selected_id in [1, 2] and ffmpeg_encoder_id in [3, 4]:
             warning_text = "Opcja VA-API dla tego skryptu jest EKSPERYMENTALNA."
         
         self.encoder_warning_label.setText(warning_text)
@@ -398,9 +453,45 @@ class ComponentSelectionDialog(QDialog):
         extension = ".mp4" if script_id in [1, 4] else ".mkv"
         return f"{base_name}{extension}"
 
+    def _scan_audio_tracks(self):
+        """Skanuje plik MKV w poszukiwaniu ścieżek audio za pomocą mkvmerge."""
+        self.audio_track_combo.clear()
+        if not self.mkv_file or not self.mkv_file.exists():
+            return
+
+        try:
+            command = ["mkvmerge", "-J", str(self.mkv_file)]
+            if platform.system() == "Windows":
+                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8', creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                result = subprocess.run(command, capture_output=True, text=True, encoding='utf-8')
+            
+            data = json.loads(result.stdout)
+            audio_tracks = [t for t in data.get("tracks", []) if t.get("type") == "audio"]
+
+            for track in audio_tracks:
+                track_id = track.get("id")
+                lang = track.get("properties", {}).get("language", "und")
+                codec = track.get("codec", "unknown")
+                title = track.get("properties", {}).get("track_name", "")
+                
+                label = f"ID {track_id}: {lang.upper()} ({codec})"
+                if title:
+                    label += f" - {title}"
+                
+                self.audio_track_combo.addItem(label, track_id)
+            
+            # Domyślnie zaznacz pierwszą ścieżkę, jeśli są dostępne
+            if self.audio_track_combo.count() > 0:
+                self.audio_track_combo.setCurrentIndex(0)
+
+        except Exception as e:
+            print(f"Błąd podczas skanowania ścieżek audio: {e}")
+
     def update_file_labels(self):
         if self.mkv_file:
             self.mkv_label.setText(f"Plik MKV: {self.mkv_file.name}")
+            self._scan_audio_tracks() # NOWE: Skanuj ścieżki przy wyborze pliku
         if self.intro_file:
             self.intro_label.setText(f"Plik wstawki: {self.intro_file.name}")
         if self.subtitle_file:
@@ -409,7 +500,8 @@ class ComponentSelectionDialog(QDialog):
             self.font_label.setText(f"Folder czcionek: {self.font_folder.name}")
         default_name = self._generate_default_output_name()
         self.default_output_name = default_name
-        self.output_name_edit.setText(default_name)
+        if not self.custom_output_checkbox.isChecked():
+            self.output_name_edit.setText(default_name)
         self._load_suffixes()
 
     def select_output_directory(self):
@@ -486,7 +578,8 @@ class ComponentSelectionDialog(QDialog):
             "intro_file": self.intro_file,
             "output_path": output_path,
             "subtitle_track_name": self.subtitle_track_name,
-            "movie_name": self.movie_name
+            "movie_name": self.movie_name,
+            "selected_audio_track_id": self.audio_track_combo.currentData()
         }
         self.tasks_to_return = [task_details] # Zapisz pojedyncze zadanie jako listę
 
@@ -658,6 +751,7 @@ class ComponentSelectionDialog(QDialog):
         self.settings.setValue("movie_name", self.movie_name_edit.text())
         self.settings.setValue("keep_movie_name", self.movie_name_checkbox.isChecked())
         self.settings.setValue("custom_output", self.custom_output_checkbox.isChecked())
+        self.settings.setValue("output_dir", self.output_dir_edit.text())
         self.settings.endGroup()
 
         QMessageBox.information(self, "Sukces", f"Preset '{preset_name}' został zapisany.")

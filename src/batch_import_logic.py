@@ -18,10 +18,11 @@ class BatchImportLogic:
             <li>Pełna ścieżka do pliku napisów (.ass)</li>
             <li>Pełna ścieżka do folderu z czcionkami</li>
             <li>Typ skryptu (1, 2, 3 lub 4)</li>
-            <li>Typ enkodera FFmpeg (1=CPU, 2=GPU CUDA, 3=GPU VA-API)</li>
+            <li>Typ enkodera FFmpeg (1=CPU, 2=GPU CUDA, 3=GPU VA-API H264, 4=GPU VA-API AV1)</li>
             <li>Bitrate (np. 8, 12)</li>
             <li>Tryb debugowania (true lub false)</li>
             <li>Pełna ścieżka do pliku wstawki (intro)</li>
+            <li>ID ścieżki audio do zachowania (np. 0, 1, 2 - domyślnie 1)</li>
         </ol>
         <p><b>Ważne:</b></p>
         <ul>
@@ -39,20 +40,25 @@ class BatchImportLogic:
                 continue
             
             parts = [p.strip() for p in line_content.split(';')]
-            while len(parts) < 8:
+            while len(parts) < 9:
                 parts.append("")
             
-            if len(parts) > 8:
-                fatal_errors.append(f"Linia {line_num}: Zbyt wiele pól (oczekiwano 8, otrzymano {len(parts)}).")
+            if len(parts) > 9:
+                fatal_errors.append(f"Linia {line_num}: Zbyt wiele pól (oczekiwano 9, otrzymano {len(parts)}).")
                 continue
 
-            mkv_path_str, sub_path_str, font_path_str, script_str, ffmpeg_str, bitrate_str, debug_str, intro_path_str = parts
+            mkv_path_str, sub_path_str, font_path_str, script_str, ffmpeg_str, bitrate_str, debug_str, intro_path_str, audio_str = parts
             
             try:
                 script_type = int(script_str) if script_str else 0
                 ffmpeg_type = int(ffmpeg_str) if ffmpeg_str else 0
                 bitrate = int(bitrate_str) if bitrate_str else 0
                 debug = debug_str.lower() in ['true', '1', 'tak']
+                audio_id = int(audio_str) if audio_str else 1
+                
+                # Zabezpieczenie: Jeśli to nie remux, enkoder nie może być 0
+                if script_type in [1, 2, 4] and ffmpeg_type == 0:
+                    ffmpeg_type = 1
             except ValueError:
                 fatal_errors.append(f"Linia {line_num}: Błędny format danych (liczby).")
                 continue
@@ -108,7 +114,7 @@ class BatchImportLogic:
                 ffmpeg_type = 0
                 bitrate = 0
 
-            task_data = (mkv_path, subtitle_path, font_folder, script_type, ffmpeg_type, bitrate, debug, intro_path, None, warnings)
+            task_data = (mkv_path, subtitle_path, font_folder, script_type, ffmpeg_type, bitrate, debug, intro_path, None, warnings, audio_id)
             tasks_to_process.append(task_data)
         
         return tasks_to_process, fatal_errors
@@ -146,7 +152,24 @@ class BatchImportLogic:
         if edit_dialog.exec() == QDialog.DialogCode.Accepted:
             final_tasks = edit_dialog.get_edited_tasks()
             if final_tasks:
-                final_tasks_cleaned = [task[:-1] for task in final_tasks]
-                return final_tasks_cleaned
+                # Konwertuj krotki na słowniki pasujące do add_task w TaskManagerze
+                dict_tasks = []
+                for t in final_tasks:
+                    # t to krotka: (mkv, sub, font, script, ffmpeg, bitrate, debug, intro, output, warnings, audio)
+                    task_dict = {
+                        "mkv_file": t[0],
+                        "subtitle_file": t[1],
+                        "font_folder": t[2],
+                        "selected_script": t[3],
+                        "selected_ffmpeg_script": t[4],
+                        "gpu_bitrate": t[5],
+                        "debug_mode": t[6],
+                        "intro_file": t[7],
+                        "output_path": t[8],
+                        "selected_audio_track_id": t[10]
+                        # subtitle_track_name i movie_name zostają domyślne przy imporcie z TXT
+                    }
+                    dict_tasks.append(task_dict)
+                return dict_tasks
         
         return None # Zwróć None, jeśli anulowano

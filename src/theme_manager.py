@@ -55,18 +55,17 @@ def get_dark_theme_qss():
 
 
     /* --- Pola wejściowe --- */
-    QLineEdit, QSpinBox, QComboBox {
+    QLineEdit, QSpinBox {
         background-color: #3c3c3c;
         border: 1px solid #4f4f4f;
         border-radius: 5px;
         padding: 5px;
         min-height: 26px;
-        color: #e0e0e0; /* Dodano kolor tekstu dla stanu normalnego */
+        color: #e0e0e0;
     }
     QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
         border: 1px solid #E67E22;
     }
-    /* NOWE: Style dla wyłączonych pól tekstowych */
     QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled {
         background-color: #444444;
         color: #888888;
@@ -86,7 +85,16 @@ def get_dark_theme_qss():
     QSpinBox::up-arrow { image: url(icon/arrow_up.svg); }
     QSpinBox::down-arrow { image: url(icon/arrow_down.svg); }
 
-    QComboBox { padding-left: 10px; }
+    QComboBox {
+        background-color: #3c3c3c;
+        border: 1px solid #4f4f4f;
+        border-radius: 5px;
+        padding: 5px;
+        padding-left: 10px;
+        min-height: 26px;
+        color: #e0e0e0;
+        combobox-popup: 0;
+    }
     QComboBox::drop-down {
         border: none;
         subcontrol-origin: padding;
@@ -94,18 +102,28 @@ def get_dark_theme_qss():
         width: 25px;
     }
     QComboBox::down-arrow { image: url(icon/arrow_down.svg); }
-    QComboBox QAbstractItemView {
-        background-color: #3c3c3c;
+
+    QComboBox QListView {
+        background-color: #2b2b2b;
         border: 1px solid #4f4f4f;
-        selection-background-color: #E67E22;
-        padding: 5px;
+        border-radius: 8px;
+        padding: 4px;
         outline: none;
+        min-width: 350px;
+    }
+    QComboBox QListView::item {
+        min-height: 32px;
+        padding-left: 10px;
+        margin: 2px;
+        border-radius: 6px;
         color: #e0e0e0;
+        border: 1px solid transparent;
     }
-    QComboBox QAbstractItemView::item {
-        padding: 5px 10px;
+    QComboBox QListView::item:selected {
+        background-color: #E67E22;
+        color: #ffffff;
     }
-    QComboBox QAbstractItemView::item:hover {
+    QComboBox QListView::item:hover {
         background-color: #4a4a4a;
     }
 
@@ -343,12 +361,14 @@ def get_dark_theme_qss():
     /* --- Paski przewijania (ScrollBars) --- */
     QScrollBar:vertical {
         width: 8px;
+        background: transparent;
     }
     QScrollBar:horizontal {
         height: 8px;
+        background: transparent;
     }
     QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
-        background: #555;
+        background: #4f4f4f;
         border-radius: 4px;
         min-height: 25px;
         min-width: 25px;
@@ -359,7 +379,50 @@ def get_dark_theme_qss():
     QScrollBar::add-line, QScrollBar::sub-line {
         height: 0px;
         width: 0px;
-        background: none;
+    }
+    QAbstractScrollArea::corner {
+        background: #2b2b2b;
+        border: none;
+    }
+
+    /* --- ToolTip --- */
+    QToolTip {
+        background-color: #3c3c3c;
+        color: #e0e0e0;
+        border: 1px solid #E67E22;
+        padding: 4px;
+        border-radius: 3px;
+        opacity: 230;
+    }
+
+    /* --- StatusBar --- */
+    QStatusBar {
+        background-color: #212121;
+        color: #aaaaaa;
+        border-top: 1px solid #3c3c3c;
+    }
+    QStatusBar::item {
+        border: none;
+    }
+
+    /* --- Slider --- */
+    QSlider::groove:horizontal {
+        border: 1px solid #4f4f4f;
+        height: 4px;
+        background: #3c3c3c;
+        margin: 2px 0;
+        border-radius: 2px;
+    }
+    QSlider::handle:horizontal {
+        background: #E67E22;
+        border: 1px solid #D35400;
+        width: 14px;
+        height: 14px;
+        margin: -6px 0;
+        border-radius: 7px;
+    }
+    QSlider::handle:horizontal:hover {
+        background: #D35400;
     }
     """
 
@@ -413,7 +476,7 @@ def get_professional_light_theme_qss():
     }
 
     /* --- Pola wejściowe --- */
-    QLineEdit, QSpinBox, QComboBox, QTextEdit, QListWidget {
+    QLineEdit, QSpinBox, QTextEdit, QListWidget {
         background-color: #FFFFFF;
         color: #111111;
         border: 1px solid #C0C0C0;
@@ -421,11 +484,8 @@ def get_professional_light_theme_qss():
         padding: 5px;
         min-height: 26px;
     }
-    QTextEdit, QListWidget {
-        outline: none; /* Usuwa domyślną ramkę fokusu */
-    }
     QLineEdit:focus, QSpinBox:focus, QComboBox:focus {
-        border: 1px solid #0078D4; /* Pozostawia ramkę fokusu dla pól edycji */
+        border: 1px solid #0078D4;
     }
     QLineEdit:disabled, QSpinBox:disabled, QComboBox:disabled, QTextEdit:disabled, QListWidget:disabled {
         background-color: #F0F0F0;
@@ -438,22 +498,42 @@ def get_professional_light_theme_qss():
     QSpinBox::up-arrow { image: url(icon/arrow_up_dark.svg); }
     QSpinBox::down-arrow { image: url(icon/arrow_down_dark.svg); }
 
+    QComboBox {
+        background-color: #FFFFFF;
+        color: #111111;
+        border: 1px solid #C0C0C0;
+        border-radius: 4px;
+        padding: 5px;
+        padding-left: 10px;
+        min-height: 26px;
+        combobox-popup: 0;
+    }
     QComboBox::drop-down { border: none; }
     QComboBox::down-arrow { image: url(icon/arrow_down_dark.svg); }
-    QComboBox QAbstractItemView {
+
+    QComboBox QListView {
         background-color: #FFFFFF;
-        border: 1px solid #C0C0C0;
-        selection-background-color: #0078D4;
-        selection-color: #FFFFFF;
+        border: 1px solid #0078D4;
+        border-radius: 8px;
         padding: 4px;
         outline: none;
+        min-width: 350px;
     }
-    QComboBox QAbstractItemView::item {
-        padding: 5px 10px;
+    QComboBox QListView::item {
+        min-height: 32px;
+        padding-left: 10px;
+        margin: 2px;
+        border-radius: 6px;
         color: #111111;
+        border: 1px solid transparent;
     }
-    QComboBox QAbstractItemView::item:hover {
+    QComboBox QListView::item:selected {
+        background-color: #0078D4;
+        color: #FFFFFF;
+    }
+    QComboBox QListView::item:hover {
         background-color: #E3F2FD;
+        color: #000000;
     }
 
     /* --- CheckBox i RadioButton --- */
@@ -591,9 +671,11 @@ def get_professional_light_theme_qss():
     /* --- Paski przewijania (ScrollBars) --- */
     QScrollBar:vertical {
         width: 8px;
+        background: transparent;
     }
     QScrollBar:horizontal {
         height: 8px;
+        background: transparent;
     }
     QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
         background: #C0C0C0;
@@ -607,6 +689,29 @@ def get_professional_light_theme_qss():
     QScrollBar::add-line, QScrollBar::sub-line {
         height: 0px;
         width: 0px;
-        background: none;
+    }
+    QAbstractScrollArea::corner {
+        background: #F5F5F5;
+        border: none;
+    }
+
+    /* --- Slider --- */
+    QSlider::groove:horizontal {
+        border: 1px solid #C0C0C0;
+        height: 4px;
+        background: #FFFFFF;
+        margin: 2px 0;
+        border-radius: 2px;
+    }
+    QSlider::handle:horizontal {
+        background: #0078D4;
+        border: 1px solid #005A9E;
+        width: 14px;
+        height: 14px;
+        margin: -6px 0;
+        border-radius: 7px;
+    }
+    QSlider::handle:horizontal:hover {
+        background: #005A9E;
     }
     """

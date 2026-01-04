@@ -147,7 +147,10 @@ class SettingsWindow(QDialog):
             if self.is_windows:
                 command = "wmic path win32_videocontroller get name"
                 result = subprocess.run(command, capture_output=True, text=True, check=True, creationflags=subprocess.CREATE_NO_WINDOW)
-                gpu_info = result.stdout.strip().split('\n')[1]
+                # WMIC zwraca puste linie i znaki \r, filtrujemy to
+                lines = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+                # Pierwsza linia to nagłówek "Name", bierzemy drugą (index 1)
+                gpu_info = lines[1] if len(lines) > 1 else "Nie wykryto nazwy GPU"
             else:
                 command = "lspci | grep VGA"
                 result = subprocess.run(command, capture_output=True, text=True, check=True, shell=True)
@@ -272,13 +275,16 @@ class SettingsWindow(QDialog):
         self.preset_ffmpeg1 = QRadioButton("CPU (CRF)")
         self.preset_ffmpeg2 = QRadioButton("GPU (Nvidia CUDA)")
         self.preset_ffmpeg3 = QRadioButton("GPU (Intel VA-API)")
+        self.preset_ffmpeg4 = QRadioButton("GPU (Intel i AMD VA-API AV1)")
         self.preset_ffmpeg_group.addButton(self.preset_ffmpeg1, 1)
         self.preset_ffmpeg_group.addButton(self.preset_ffmpeg2, 2)
         self.preset_ffmpeg_group.addButton(self.preset_ffmpeg3, 3)
+        self.preset_ffmpeg_group.addButton(self.preset_ffmpeg4, 4)
         ffmpeg_box = QVBoxLayout()
         ffmpeg_box.addWidget(self.preset_ffmpeg1)
         ffmpeg_box.addWidget(self.preset_ffmpeg2)
         ffmpeg_box.addWidget(self.preset_ffmpeg3)
+        ffmpeg_box.addWidget(self.preset_ffmpeg4)
         right_layout.addRow("Enkoder FFmpeg:", ffmpeg_box)
 
         # 3. Bitrate
@@ -459,12 +465,21 @@ class SettingsWindow(QDialog):
 
         # Logika dla opcji enkodera FFmpeg
         is_ffmpeg_relevant = script_id in [1, 2, 4]
-        for btn in self.preset_ffmpeg_group.buttons():
-            btn.setEnabled(is_ffmpeg_relevant)
+        
+        # Ustaw stan włącz/wyłącz dla każdego przycisku enkodera
+        self.preset_ffmpeg1.setEnabled(is_ffmpeg_relevant)
+        self.preset_ffmpeg2.setEnabled(is_ffmpeg_relevant)
+        self.preset_ffmpeg3.setEnabled(is_ffmpeg_relevant)
+        self.preset_ffmpeg4.setEnabled(script_id == 4) # AV1 jest tylko dla skryptu z wstawką
+
+        # Jeśli aktualnie zaznaczony enkoder stał się nieaktywny, przełącz na CPU
+        if is_ffmpeg_relevant and not self.preset_ffmpeg_group.checkedButton().isEnabled():
+            self.preset_ffmpeg1.setChecked(True)
+            ffmpeg_id = 1 # Zaktualizuj ID dla logiki bitrate poniżej
 
         # Logika dla bitrate
-        is_gpu_encoder = ffmpeg_id in [2, 3]
-        is_bitrate_relevant = (is_ffmpeg_relevant and is_gpu_encoder) or script_id == 4
+        is_gpu_encoder = ffmpeg_id in [2, 3, 4]
+        is_bitrate_relevant = is_ffmpeg_relevant and is_gpu_encoder
         self.preset_bitrate_spin.setEnabled(is_bitrate_relevant)
 
         # Logika dla opcji remuxa (nazwa ścieżki, nazwa filmu)

@@ -19,6 +19,7 @@ class Task:
     subtitle_track_name: str = field(default="")
     movie_name: str = field(default="")
     keep_original_movie_name: bool = field(default=False) # Dodajemy to pole
+    selected_audio_track_id: int | None = field(default=None) # Nowe pole: ID wybranej ścieżki audio
 
     status: str = "Oczekuje"
 
@@ -45,6 +46,9 @@ class Task:
                 # Pokaż nazwę ścieżki tylko, jeśli nie jest pusta
                 if self.subtitle_track_name.strip():
                     remux_info_parts.append(f"Nazwa ścieżki: {self.subtitle_track_name}")
+
+                if self.selected_audio_track_id is not None:
+                    remux_info_parts.append(f"Audio ID: {self.selected_audio_track_id}")
 
                 # Logika wyświetlania Movie Name
                 if self.keep_original_movie_name:
@@ -137,7 +141,11 @@ class TaskManager:
         self.update_list_widget()
 
     # --- ZMIANA 3: Zaktualizowana sygnatura metody ---
-    def add_task(self, mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode, intro_file, output_path=None, subtitle_track_name="", movie_name=""):
+    def add_task(self, mkv_file, subtitle_file, font_folder, selected_script, selected_ffmpeg_script, gpu_bitrate, debug_mode, intro_file, output_path=None, subtitle_track_name="", movie_name="", selected_audio_track_id=None):
+        # Wykryj "magiczną spację" oznaczającą zachowanie nazwy
+        keep_original = (movie_name == " ")
+        final_movie_name = "" if keep_original else movie_name
+
         task = Task(
             mkv_file=Path(mkv_file) if mkv_file else None,
             subtitle_file=Path(subtitle_file) if subtitle_file else None,
@@ -149,7 +157,9 @@ class TaskManager:
             intro_file=Path(intro_file) if intro_file else None,
             output_path=Path(output_path) if output_path else None,
             subtitle_track_name=subtitle_track_name,
-            movie_name=movie_name
+            movie_name=final_movie_name,
+            keep_original_movie_name=keep_original,
+            selected_audio_track_id=selected_audio_track_id
         )
         self.tasks.append(task)
         self.update_list_widget()

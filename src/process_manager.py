@@ -163,9 +163,13 @@ class ProcessManager(QObject):
         self.eta_seconds = -1
         self.progress_percentage = -1.0
         if self.is_running():
-            self.process.finished.disconnect()
+            try:
+                self.process.finished.disconnect()
+            except Exception:
+                pass
             self.process.kill()
-            self.process.waitForFinished(-1)
+            # Czekaj maksymalnie 500ms na kulturalne zakończenie, potem idź dalej
+            self.process.waitForFinished(500)
         self.process = None
         self.current_task = None
 
@@ -188,15 +192,17 @@ class ProcessManager(QObject):
         # --- TWOJA POPRAWNA LOGIKA ---
         track_name = self.current_task.subtitle_track_name.strip() or ""
         movie_name = self.current_task.movie_name
-        args = ["-o", str(output_file), "--audio-tracks", "1", "--no-subtitles",
+        audio_id = str(self.current_task.selected_audio_track_id) if self.current_task.selected_audio_track_id is not None else "1"
+
+        args = ["-o", str(output_file), "--audio-tracks", audio_id, "--no-subtitles",
                 "--no-track-tags", "--no-chapters", "--no-attachments", str(mkv_file),
                 "--language", "0:pol", "--track-name", f"0:{track_name}", str(subtitle_file)]
-        if movie_name == " ":
-            pass
+        if self.current_task.keep_original_movie_name:
+            pass # Nie dodawaj flagi --title, zachowaj oryginał
         elif movie_name:
             args.extend(["--title", movie_name])
         else:
-            args.extend(["--title", ""])
+            args.extend(["--title", ""]) # Wyczyść tytuł, jeśli pole jest puste i nie zaznaczono "zachowaj"
         # -----------------------------
 
         if font_path.is_dir():
@@ -217,16 +223,18 @@ class ProcessManager(QObject):
         # --- TWOJA POPRAWNA LOGIKA ---
         track_name = self.current_task.subtitle_track_name.strip() or ""
         movie_name = self.current_task.movie_name
+        audio_id = str(self.current_task.selected_audio_track_id) if self.current_task.selected_audio_track_id is not None else "1"
+
         # --- MAŁA KOREKTA ZMIENNEJ ---
-        args = ["-o", str(output_file_remux), "--audio-tracks", "1", "--no-subtitles",
+        args = ["-o", str(output_file_remux), "--audio-tracks", audio_id, "--no-subtitles",
                 "--no-track-tags", "--no-chapters", "--no-attachments", str(mkv_file),
                 "--language", "0:pol", "--track-name", f"0:{track_name}", str(subtitle_file)]
-        if movie_name == " ":
-            pass
+        if self.current_task.keep_original_movie_name:
+            pass # Nie dodawaj flagi --title, zachowaj oryginał
         elif movie_name:
             args.extend(["--title", movie_name])
         else:
-            args.extend(["--title", ""])
+            args.extend(["--title", ""]) # Wyczyść tytuł, jeśli pole jest puste i nie zaznaczono "zachowaj"
         # -----------------------------
 
         if font_path.is_dir():
@@ -268,12 +276,21 @@ class ProcessManager(QObject):
         subtitle_path = self._get_safe_path_for_ffmpeg(mkv_path)
 
         program = "ffmpeg"
+        args = [] # Domyślnie pusta lista
+        
         if self.current_task.selected_ffmpeg_script == 1: # CPU
             args = ["-i", str(mkv_path), "-vf", f"format=yuv420p,subtitles='{subtitle_path}'", "-map_metadata", "-1", "-movflags", "+faststart", "-c:v", "libx264", "-profile:v", "main", "-level:v", "4.0", "-preset", "veryfast", "-crf", "16", "-maxrate", "20M", "-bufsize", "25M", "-x264-params", "colormatrix=bt709", "-c:a", "copy", str(output_file)]
         elif self.current_task.selected_ffmpeg_script == 2: # GPU (CUDA)
             args = ["-y", "-vsync", "0", "-hwaccel", "cuda", "-i", str(mkv_path), "-vf", f"subtitles='{subtitle_path}'", "-c:a", "copy", "-c:v", "h264_nvenc", "-preset", "p2", "-tune", "1", "-b:v", f"{self.current_task.gpu_bitrate}M", "-bufsize", "15M", "-maxrate", "15M", "-qmin", "0", "-g", "250", "-bf", "3", "-b_ref_mode", "middle", "-temporal-aq", "1", "-rc-lookahead", "20", "-i_qfactor", "0.75", "-b_qfactor", "1.1", str(output_file)]
         elif self.current_task.selected_ffmpeg_script == 3: # GPU (VA-API)
             args = ["-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-i", str(mkv_path), "-vf", f"subtitles='{subtitle_path}',format=nv12,hwupload", "-c:a", "copy", "-c:v", "h264_vaapi", "-b:v", f"{self.current_task.gpu_bitrate}M", str(output_file)]
+        elif self.current_task.selected_ffmpeg_script == 4: # GPU (VA-API AV1)
+            args = ["-hwaccel", "vaapi", "-hwaccel_output_format", "vaapi", "-i", str(mkv_path), "-vf", f"subtitles='{subtitle_path}',format=nv12,hwupload", "-c:a", "copy", "-c:v", "av1_vaapi", "-b:v", f"{self.current_task.gpu_bitrate}M", str(output_file)]
+
+        if not args:
+            self.log_message.emit("BŁĄD: Nie wybrano poprawnego enkodera FFmpeg.")
+            self.task_completed(success=False)
+            return
 
         if self.debug_mode:
             self.log_debug(f"Running command: {program} {' '.join(args)}")
@@ -324,7 +341,7 @@ class ProcessManager(QObject):
             ]
 
         # Skrypty dla GPU (CUDA lub VA-API)
-        elif self.current_task.selected_ffmpeg_script in [2, 3]:
+        elif self.current_task.selected_ffmpeg_script in [2, 3, 4]:
             self.log_terminal("Using GPU path for intro script.")
             video_filter_cpu = f"[1:v]subtitles='{subtitle_path}'[v_subs];[0:v][v_subs]concat=n=2:v=1:a=0[v_cpu]"
             
@@ -334,11 +351,17 @@ class ProcessManager(QObject):
                 filter_complex = f"{video_filter_cpu};[v_cpu]hwupload_cuda[v_out];{audio_filter}"
                 video_codec_args = ["-c:v", "h264_nvenc", "-preset", "p2"]
 
-            else: # selected_ffmpeg_script == 3
-                self.log_terminal("Using VA-API path.")
+            elif self.current_task.selected_ffmpeg_script == 3:
+                self.log_terminal("Using VA-API H264 path.")
                 hw_accel_args = ["-hwaccel", "vaapi"]
                 filter_complex = f"{video_filter_cpu};[v_cpu]format=nv12,hwupload[v_out];{audio_filter}"
                 video_codec_args = ["-c:v", "h264_vaapi", "-profile:v", "high"]
+            
+            elif self.current_task.selected_ffmpeg_script == 4:
+                self.log_terminal("Using VA-API AV1 path.")
+                hw_accel_args = ["-hwaccel", "vaapi"]
+                filter_complex = f"{video_filter_cpu};[v_cpu]format=nv12,hwupload[v_out];{audio_filter}"
+                video_codec_args = ["-c:v", "av1_vaapi"]
 
             args = [
                 *hw_accel_args,
