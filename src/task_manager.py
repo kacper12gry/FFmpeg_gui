@@ -190,3 +190,12 @@ class TaskManager:
         if self.tasks and hasattr(self.tasks[0], 'status'):
             self.tasks[0].status = status
             self.update_list_widget()
+
+    def move_task(self, from_index: int, to_index: int):
+        """Przesuwa zadanie na liście z pozycji from_index na to_index."""
+        if not (0 <= from_index < len(self.tasks) and 0 <= to_index < len(self.tasks)):
+            return # Indeksy poza zakresem
+            
+        task = self.tasks.pop(from_index)
+        self.tasks.insert(to_index, task)
+        self.update_list_widget()

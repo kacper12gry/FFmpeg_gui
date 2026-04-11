@@ -3,14 +3,16 @@
 import sys
 import os
 import platform
+import shutil
 if platform.system() == "Windows":
     import ctypes
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout,
     QWidget, QListWidget, QAbstractItemView, QMessageBox, QDialog,
-    QGroupBox, QSplitter, QStyleFactory, QLabel, QSystemTrayIcon, QCheckBox
+    QGroupBox, QSplitter, QStyleFactory, QLabel, QSystemTrayIcon, QCheckBox,
+    QFrame, QSizePolicy
 )
-from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl
+from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl, QTime, QSignalBlocker
 from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices, QPalette, QColor
 from packaging.version import parse
 
@@ -58,14 +60,42 @@ class MainWindow(QMainWindow):
         self.create_menu_bar()
         self.load_settings()
         self.check_for_updates()
+        
+        # Sprawdzenie zależności przy starcie
+        QTimer.singleShot(500, self._check_startup_dependencies)
+
+    def _check_startup_dependencies(self):
+        """Sprawdza czy ffmpeg, mkvmerge i ffprobe są dostępne."""
+        missing = []
+        for tool in ["ffmpeg", "ffprobe", "mkvmerge"]:
+            if not shutil.which(tool):
+                missing.append(tool)
+        
+        if missing:
+            tools_str = ", ".join(missing)
+            QMessageBox.critical(
+                self, 
+                "Brakujące narzędzia", 
+                f"UWAGA: W Twoim systemie brakuje następujących narzędzi: <b>{tools_str}</b>.<br><br>"
+                "Program może nie działać poprawnie. Zainstaluj je lub dodaj do PATH, aby móc korzystać z pełni funkcji."
+            )
 
     def check_for_updates(self):
         if self.settings.value("update_check/enabled", True, type=bool):
-            self.version_checker = VersionChecker(self)
-            self.version_checker.check_complete.connect(self.handle_version_check_result)
-            # Opcjonalnie: obsługa błędów
-            # self.version_checker.error_occurred.connect(lambda e: print(f"Update check error: {e}"))
-            self.version_checker.start()
+            from PyQt6.QtCore import QDate
+            last_check = self.settings.value("update_check/last_check_date", "", type=str)
+            today = QDate.currentDate().toString(Qt.DateFormat.ISODate)
+
+            if last_check != today:
+                self.version_checker = VersionChecker(self)
+                self.version_checker.check_complete.connect(self.handle_version_check_result)
+                # Opcjonalnie: obsługa błędów
+                # self.version_checker.error_occurred.connect(lambda e: print(f"Update check error: {e}"))
+                self.version_checker.start()
+                
+                # Zapisujemy dzisiejszą datę jako ostatnie sprawdzenie
+                self.settings.setValue("update_check/last_check_date", today)
+                self.settings.sync()
 
     def handle_version_check_result(self, latest_version, release_url):
         ignored_versions = self.settings.value("update_check/ignored", [], type=str)
@@ -146,8 +176,32 @@ class MainWindow(QMainWindow):
         task_layout = QVBoxLayout(task_group)
         task_layout.addWidget(self.task_list)
         
+        # Kontrolki pod listą zadań
         task_controls = QHBoxLayout()
-        task_controls.addWidget(self.cancel_button)
+        
+        # Przyciski góra/dół dla trybu klasycznego
+        if self.current_layout_type != "dashboard":
+            self.cancel_button.setVisible(True) # Pokaż w trybie klasycznym
+            task_controls.addWidget(self.cancel_button)
+            
+            # Przyciski góra/dół (Ikony) - Po prawej stronie przycisku anuluj
+            btn_up = QPushButton()
+            btn_up.setIcon(QIcon("icon/arrow_up.svg"))
+            btn_up.setToolTip("Przesuń wyżej")
+            btn_up.setFixedWidth(30)
+            btn_up.clicked.connect(self.move_task_up)
+            
+            btn_down = QPushButton()
+            btn_down.setIcon(QIcon("icon/arrow_down.svg"))
+            btn_down.setToolTip("Przesuń niżej")
+            btn_down.setFixedWidth(30)
+            btn_down.clicked.connect(self.move_task_down)
+            
+            task_controls.addWidget(btn_up)
+            task_controls.addWidget(btn_down)
+        else:
+            self.cancel_button.setVisible(False) # Ukryj w Dashboardzie (bo lewituje)
+
         task_controls.addStretch()
         task_controls.addWidget(self.eta_label)
         task_layout.addLayout(task_controls)
@@ -160,37 +214,119 @@ class MainWindow(QMainWindow):
             # --- UKŁAD ROZBUDOWANY (DASHBOARD) ---
             h_layout = QHBoxLayout()
             
-            # Lewy pasek boczny (Nawigacja i Statystyki)
+            # Lewy pasek boczny
             sidebar = QVBoxLayout()
             sidebar.setSpacing(10)
             
-            nav_group = QGroupBox("Akcje")
-            nav_layout = QVBoxLayout(nav_group)
-            self.button.setText("Dodaj zadanie") # Krótszy tekst dla paska bocznego
-            nav_layout.addWidget(self.button)
-            nav_layout.addWidget(self.refresh_button)
-            sidebar.addWidget(nav_group)
+            # 1. Główne Akcje
+            actions_group = QGroupBox("Główne Akcje")
+            actions_layout = QVBoxLayout(actions_group)
+            self.button.setText("➕ Dodaj Zadania") 
+            self.button.setMinimumHeight(45)
+            self.button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            self.button.setStyleSheet("font-weight: bold; font-size: 13px;")
             
-            stats_group = QGroupBox("Statystyki sesji")
-            stats_layout = QVBoxLayout(stats_group)
-            self.stats_version_label = QLabel(f"Wersja: {self.app_version}")
-            self.stats_os_label = QLabel(f"System: {platform.system()}")
-            stats_layout.addWidget(self.stats_version_label)
-            stats_layout.addWidget(self.stats_os_label)
-            sidebar.addWidget(stats_group)
+            self.refresh_button.setText("🔄 Restart Programu")
+            self.refresh_button.setMinimumHeight(45)
+            self.refresh_button.setMaximumWidth(16777215) # Resetowanie ograniczenia (QWIDGETSIZE_MAX)
+            self.refresh_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+            
+            actions_layout.addWidget(self.button)
+            actions_layout.addWidget(self.refresh_button)
+            sidebar.addWidget(actions_group)
+            
+            # 2. Sterowanie Kolejką
+            queue_ctrl_group = QGroupBox("Sterowanie Kolejką")
+            queue_grid = QVBoxLayout(queue_ctrl_group)
+            
+            # Przyciski przesuwania
+            move_layout = QHBoxLayout()
+            btn_up = QPushButton(" Góra")
+            btn_up.setIcon(QIcon("icon/arrow_up.svg"))
+            btn_up.clicked.connect(self.move_task_up)
+            
+            btn_down = QPushButton(" Dół")
+            btn_down.setIcon(QIcon("icon/arrow_down.svg"))
+            btn_down.clicked.connect(self.move_task_down)
+            
+            move_layout.addWidget(btn_up)
+            move_layout.addWidget(btn_down)
+            
+            # Przyciski usuwania
+            btn_remove = QPushButton("❌ Usuń zaznaczone")
+            btn_remove.clicked.connect(self.show_cancel_confirmation)
+            
+            btn_clear = QPushButton("🗑️ Wyczyść wszystko")
+            btn_clear.clicked.connect(self.clear_all_tasks)
+            
+            queue_grid.addLayout(move_layout)
+            queue_grid.addWidget(btn_remove)
+            queue_grid.addWidget(btn_clear)
+            sidebar.addWidget(queue_ctrl_group)
+
+            # 3. Status Aktywny
+            status_group = QGroupBox("Teraz Przetwarzane")
+            status_layout = QVBoxLayout(status_group)
+            
+            self.active_file_label = QLabel("- brak -")
+            self.active_file_label.setWordWrap(True)
+            self.active_file_label.setStyleSheet("font-weight: bold; color: #4aa6ff;")
+            
+            self.queue_active_label = QLabel("Status: Bezczynny")
+            self.queue_active_label.setStyleSheet("color: gray;")
+            
+            status_layout.addWidget(QLabel("Plik:"))
+            status_layout.addWidget(self.active_file_label)
+            status_layout.addSpacing(5)
+            status_layout.addWidget(self.queue_active_label)
+            status_layout.addWidget(self.eta_label)
+            self.eta_label.setVisible(True)
+            
+            sidebar.addWidget(status_group)
+            
+            # 4. Opcje
+            settings_group = QGroupBox("Opcje")
+            settings_layout = QVBoxLayout(settings_group)
+            
+            # Checkbox RPC
+            self.rpc_dashboard_check = QCheckBox("Discord RPC")
+            rpc_enabled = self.settings.value("discord_rpc_enabled", False, type=bool)
+            self.rpc_dashboard_check.setChecked(rpc_enabled)
+            self.rpc_dashboard_check.toggled.connect(self.toggle_discord_rpc)
+            settings_layout.addWidget(self.rpc_dashboard_check)
+            
+            # Checkbox Szczegółowy widok
+            self.detailed_dashboard_check = QCheckBox("Szczegółowy widok")
+            detailed_enabled = self.settings.value("detailed_view", False, type=bool)
+            self.detailed_dashboard_check.setChecked(detailed_enabled)
+            self.detailed_dashboard_check.toggled.connect(self.toggle_detailed_view)
+            settings_layout.addWidget(self.detailed_dashboard_check)
+            
+            sidebar.addWidget(settings_group)
+            
             sidebar.addStretch()
             
-            h_layout.addLayout(sidebar, 0)
+            sidebar_widget = QWidget()
+            sidebar_widget.setLayout(sidebar)
+            sidebar_widget.setFixedWidth(260)
+            
+            h_layout.addWidget(sidebar_widget, 0)
             
             # Splitter dla logów i zadań
             self.splitter = QSplitter(Qt.Orientation.Horizontal)
             self.splitter.addWidget(log_group)
             self.splitter.addWidget(task_group)
-            self.splitter.setStretchFactor(0, 1) # Logi 50%
-            self.splitter.setStretchFactor(1, 1) # Zadania 50%
+            self.splitter.setStretchFactor(0, 1)
+            self.splitter.setStretchFactor(1, 1)
             
             h_layout.addWidget(self.splitter, 1)
             main_layout.addLayout(h_layout)
+
+            # Timer do aktualizacji GUI
+            self.dashboard_timer = QTimer(self)
+            self.dashboard_timer.timeout.connect(self._update_dashboard_info)
+            self.dashboard_timer.start(1000)
+
         else:
             # --- UKŁAD KLASYCZNY ---
             self.button.setText("Otwórz okno wyboru komponentów")
@@ -204,6 +340,89 @@ class MainWindow(QMainWindow):
             self.splitter.addWidget(log_group)
             self.splitter.setStretchFactor(1, 2)
             main_layout.addWidget(self.splitter)
+
+    def _update_dashboard_info(self):
+        """Aktualizuje informacje w panelu bocznym."""
+        if not hasattr(self, 'queue_active_label'): return
+        
+        is_running = self.process_manager.is_running()
+        
+        # Status
+        status_text = "PRZETWARZANIE" if is_running else "OCZEKIWANIE"
+        color = "#cf222e" if is_running else "gray" # Czerwony jeśli działa
+        if not is_running and self.task_list.count() == 0:
+             status_text = "BEZCZYNNY"
+             color = "#2da44e" # Zielony jeśli pusto
+
+        self.queue_active_label.setText(f"Status: {status_text}")
+        self.queue_active_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+
+        # Aktywny plik
+        if self.task_list.count() > 0:
+            # Zakładamy, że pierwsze zadanie jest tym aktywnym lub następnym
+            item = self.task_list.item(0)
+            task_name = item.text().split(" | ")[0] # Uproszczone pobieranie nazwy
+            self.active_file_label.setText(task_name)
+        else:
+            self.active_file_label.setText("- brak zadań -")
+
+    def move_task_up(self):
+        row = self.task_list.currentRow()
+        if row <= 0: return # Nie można wyżej
+
+        # Zabezpieczenie: Jeśli proces działa, nie pozwól ruszać zadania nr 0 ani wstawiać przed nie
+        if self.process_manager.is_running():
+            if row == 0:
+                QMessageBox.warning(self, "Blokada", "Nie można przesuwać zadania, które jest aktualnie przetwarzane.")
+                return
+            if row == 1:
+                QMessageBox.warning(self, "Blokada", "Nie można wstawić zadania przed aktualnie przetwarzane.")
+                return
+
+        # Zlecamy przesunięcie managerowi (on odświeży widok)
+        self.task_manager.move_task(row, row - 1)
+        
+        # Przywracamy zaznaczenie na przesunięty element
+        self.task_list.setCurrentRow(row - 1)
+
+    def move_task_down(self):
+        row = self.task_list.currentRow()
+        if row == -1 or row >= self.task_list.count() - 1: return # Nie można niżej
+
+        # Zabezpieczenie: Jeśli proces działa, nie pozwól ruszać zadania nr 0
+        if self.process_manager.is_running() and row == 0:
+            QMessageBox.warning(self, "Blokada", "Nie można przesuwać zadania, które jest aktualnie przetwarzane.")
+            return
+
+        # Zlecamy przesunięcie managerowi
+        self.task_manager.move_task(row, row + 1)
+        
+        # Przywracamy zaznaczenie
+        self.task_list.setCurrentRow(row + 1)
+
+    def clear_all_tasks(self):
+        if self.task_list.count() == 0:
+            return
+
+        msg = "Czy na pewno usunąć WSZYSTKIE zadania?"
+        if self.process_manager.is_running():
+            msg = "Proces jest aktywny. Zostaną usunięte tylko zadania oczekujące (kolejka).\nZadanie obecnie przetwarzane pozostanie.\n\nCzy kontynuować?"
+
+        reply = QMessageBox.question(self, "Potwierdzenie", msg, 
+                                   QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            if self.process_manager.is_running():
+                # Usuń wszystko poza indeksem 0 (aktywnym)
+                # Iterujemy tak długo, jak długo są więcej niż 1 zadanie
+                while self.task_list.count() > 1:
+                    # Zawsze usuwamy indeks 1, bo lista się przesuwa po usunięciu
+                    self.task_manager.remove_task(1)
+                
+                QMessageBox.information(self, "Info", "Wyczyszczono kolejkę oczekujących zadań.")
+            else:
+                self.task_list.clear()
+                self.task_manager.tasks.clear()
 
     def create_menu_bar(self):
         menu_bar = self.menuBar()
@@ -377,13 +596,33 @@ class MainWindow(QMainWindow):
 
     def toggle_detailed_view(self, checked):
         self._update_setting("detailed_view", checked, self.task_manager.set_detailed_view)
+        
+        # Synchronizacja checkboxa w Dashboardzie
+        if hasattr(self, 'detailed_dashboard_check') and self.detailed_dashboard_check.isChecked() != checked:
+            with QSignalBlocker(self.detailed_dashboard_check):
+                self.detailed_dashboard_check.setChecked(checked)
+        
+        # Synchronizacja akcji w menu
+        if hasattr(self, 'detailed_view_action') and self.detailed_view_action.isChecked() != checked:
+            with QSignalBlocker(self.detailed_view_action):
+                self.detailed_view_action.setChecked(checked)
 
     def toggle_discord_rpc(self, checked):
         if checked:
             self.rpc_manager.start()
         else:
             self.rpc_manager.stop()
+        
         self._update_setting("discord_rpc_enabled", checked)
+        
+        # Synchronizacja UI (blokada sygnałów, aby uniknąć pętli)
+        if hasattr(self, 'discord_rpc_action') and self.discord_rpc_action.isChecked() != checked:
+            with QSignalBlocker(self.discord_rpc_action):
+                self.discord_rpc_action.setChecked(checked)
+        
+        if hasattr(self, 'rpc_dashboard_check') and self.rpc_dashboard_check.isChecked() != checked:
+            with QSignalBlocker(self.rpc_dashboard_check):
+                self.rpc_dashboard_check.setChecked(checked)
 
     def closeEvent(self, event):
         if hasattr(self, 'process_manager') and self.process_manager.is_running():
@@ -500,7 +739,13 @@ if __name__ == "__main__":
     if platform.system() == "Windows":
         myappid = 'com.github.kacper12gry.automatyzer'
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
+    
     app = QApplication(sys.argv)
+    app.setApplicationName("Automatyzer")
+    app.setApplicationDisplayName("Automatyzer")
+    app.setApplicationVersion(__version__)
+    app.setOrganizationName("kacper12gry")
+    
     original_style_name, original_stylesheet = app.style().objectName(), app.styleSheet()
     window = MainWindow(original_style_name, original_stylesheet)
     window.show()

@@ -22,7 +22,7 @@ class BatchImportLogic:
             <li>Bitrate (np. 8, 12)</li>
             <li>Tryb debugowania (true lub false)</li>
             <li>Pełna ścieżka do pliku wstawki (intro)</li>
-            <li>ID ścieżki audio do zachowania (np. 0, 1, 2 - domyślnie 1)</li>
+            <li>ID ścieżki audio do zachowania (np. 0, 1, 2 - domyślnie 0)</li>
         </ol>
         <p><b>Ważne:</b></p>
         <ul>
@@ -54,7 +54,7 @@ class BatchImportLogic:
                 ffmpeg_type = int(ffmpeg_str) if ffmpeg_str else 0
                 bitrate = int(bitrate_str) if bitrate_str else 0
                 debug = debug_str.lower() in ['true', '1', 'tak']
-                audio_id = int(audio_str) if audio_str else 1
+                audio_id = int(audio_str) if audio_str else 0
                 
                 # Zabezpieczenie: Jeśli to nie remux, enkoder nie może być 0
                 if script_type in [1, 2, 4] and ffmpeg_type == 0:

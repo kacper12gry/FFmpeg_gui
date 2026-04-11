@@ -172,6 +172,7 @@ class SettingsWindow(QDialog):
         }
         self.theme_combo.addItems(self.themes.values())
         layout.addRow("Motyw aplikacji:", self.theme_combo)
+        layout.addRow("", self._create_hint_label("Zmienia kolorystykę i styl graficzny całego interfejsu."))
 
         self.style_engine_label = QLabel("Silnik motywu systemowego:")
         self.style_engine_combo = QComboBox()
@@ -187,15 +188,26 @@ class SettingsWindow(QDialog):
         self.discord_rpc_checkbox = QCheckBox("Włącz integrację z Discord (RPC)")
         self.discord_rpc_checkbox.setVisible(not self.is_flatpak)
         layout.addRow(self.discord_rpc_checkbox)
+        self.rpc_hint = self._create_hint_label("Pokazuje aktualnie przetwarzany film w Twoim profilu Discord.")
+        self.rpc_hint.setVisible(not self.is_flatpak)
+        layout.addRow("", self.rpc_hint)
 
         self.detailed_view_checkbox = QCheckBox("Używaj szczegółowego widoku listy zadań")
         layout.addRow(self.detailed_view_checkbox)
+        layout.addRow("", self._create_hint_label("Wyświetla pełne ścieżki i parametry techniczne bezpośrednio na liście."))
 
         self.show_summary_checkbox = QCheckBox("Pokazuj podsumowanie przed dodaniem zadania")
         layout.addRow(self.show_summary_checkbox)
+        layout.addRow("", self._create_hint_label("Wyświetla okno z detalami do sprawdzenia przed wrzuceniem zadania do kolejki."))
 
         self.theme_combo.currentTextChanged.connect(self._update_style_engine_visibility)
         self._update_style_engine_visibility(self.theme_combo.currentText())
+
+    def _create_hint_label(self, text):
+        label = QLabel(text)
+        label.setStyleSheet("color: gray; font-size: 10px; margin-bottom: 5px;")
+        label.setWordWrap(True)
+        return label
 
     def _update_style_engine_visibility(self, theme_text):
         is_system_theme = (theme_text == self.themes["system"])
@@ -510,16 +522,41 @@ class SettingsWindow(QDialog):
         layout = QFormLayout(self.processing_tab)
         layout.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
 
+        # --- Sekcja Trybu Frixy (Ukryta domyślnie) ---
+        self.frixy_group = QGroupBox("Tryb Frixy")
+        self.frixy_group.setVisible(False) # Domyślnie niewidoczne
+        frixy_layout = QFormLayout(self.frixy_group)
+        
+        self.frixy_mode_checkbox = QCheckBox("Włącz Tryb Frixy")
+        frixy_layout.addRow(self.frixy_mode_checkbox)
+        frixy_layout.addRow("", self._create_hint_label("Aktywuje specjalne nazewnictwo i wybór serii zgodny ze standardami FrixySubs."))
+
+        self.frixy_series_url_edit = QLineEdit()
+        self.frixy_refresh_button = QPushButton("Odśwież bazę")
+        self.frixy_refresh_button.clicked.connect(self._refresh_frixy_data)
+        
+        f_url_layout = QHBoxLayout()
+        f_url_layout.addWidget(self.frixy_series_url_edit)
+        f_url_layout.addWidget(self.frixy_refresh_button)
+        
+        frixy_layout.addRow("URL do bazy serii:", f_url_layout)
+        frixy_layout.addRow("", self._create_hint_label("Adres URL do pliku JSON z listą serii (np. z GitHub)."))
+        
+        layout.addRow(self.frixy_group)
+
         self.gpu_bitrate_spin = QSpinBox()
         self.gpu_bitrate_spin.setRange(1, 100)
         self.gpu_bitrate_spin.setSuffix(" Mbps")
-        layout.addRow("Domyślny bitrate dla GPU/FFmpeg + wstawka:", self.gpu_bitrate_spin)
+        layout.addRow("Domyślny bitrate dla GPU:", self.gpu_bitrate_spin)
+        layout.addRow("", self._create_hint_label("Stały bitrate używany przy kodowaniu sprzętowym. Wyższa wartość = lepsza jakość, ale większy plik."))
 
         self.subtitle_track_name_edit = QLineEdit()
         layout.addRow("Domyślna nazwa ścieżki napisów:", self.subtitle_track_name_edit)
+        layout.addRow("", self._create_hint_label("Etykieta, która będzie widoczna w odtwarzaczu przy wyborze napisów."))
 
         self.gpu_info_label = QLabel("Wczytywanie...")
-        layout.addRow("Karta graficzna:", self.gpu_info_label)
+        layout.addRow("Wykryta karta graficzna:", self.gpu_info_label)
+        layout.addRow("", self._create_hint_label("Informacja o GPU, które zostanie użyte do akceleracji sprzętowej."))
 
     def _create_about_tab(self):
         main_layout = QVBoxLayout(self.about_tab)
@@ -629,6 +666,14 @@ class SettingsWindow(QDialog):
         for key, edit in self.path_edits.items():
             edit.setText(self.settings.value(key, ""))
 
+        frixy_enabled = self.settings.value("frixy_mode", False, type=bool)
+        self.frixy_mode_checkbox.setChecked(frixy_enabled)
+        self.frixy_series_url_edit.setText(self.settings.value("frixy_series_url", "https://raw.githubusercontent.com/Intro33/frixy-series/refs/heads/main/series.json"))
+        
+        # Jeśli tryb Frixy był już włączony, pokaż jego ustawienia od razu
+        if frixy_enabled:
+            self.frixy_group.setVisible(True)
+
         self.gpu_bitrate_spin.setValue(self.settings.value("processing/default_gpu_bitrate", 8, type=int))
         self.subtitle_track_name_edit.setText(self.settings.value("remux/subtitle_track_name", ""))
 
@@ -650,6 +695,9 @@ class SettingsWindow(QDialog):
 
         for key, edit in self.path_edits.items():
             self.settings.setValue(key, edit.text())
+
+        self.settings.setValue("frixy_mode", self.frixy_mode_checkbox.isChecked())
+        self.settings.setValue("frixy_series_url", self.frixy_series_url_edit.text())
 
         self.settings.setValue("processing/default_gpu_bitrate", self.gpu_bitrate_spin.value())
         self.settings.setValue("remux/subtitle_track_name", self.subtitle_track_name_edit.text())
@@ -836,6 +884,22 @@ class SettingsWindow(QDialog):
             output = bytes(self.process.readAll()).decode('utf-8', errors='ignore')
             self.output_window.append(output)
 
+    def _refresh_frixy_data(self):
+        from frixy_mode_manager import FrixyModeManager
+        url = self.frixy_series_url_edit.text()
+        if not url:
+            QMessageBox.warning(self, "Błąd", "Najpierw wprowadź URL do bazy serii.")
+            return
+            
+        # Zapisz ustawienia przed odświeżeniem, aby użyć nowego URL
+        self.settings.setValue("frixy_series_url", url)
+        
+        data = FrixyModeManager.get_instance().fetch_data(url, force=True)
+        if data:
+            QMessageBox.information(self, "Sukces", "Baza serii Frixy została pomyślnie zaktualizowana.")
+        else:
+            QMessageBox.warning(self, "Błąd", "Nie udało się pobrać bazy serii. Sprawdź URL i połączenie z internetem.")
+
     def accept(self):
         self.save_settings()
         super().accept()
@@ -849,6 +913,9 @@ class SettingsWindow(QDialog):
         return super().eventFilter(obj, event)
 
     def show_easter_egg(self):
+        # Ujawnij sekcję Trybu Frixy w zakładce Przetwarzanie
+        self.frixy_group.setVisible(True)
+        
         if self.image_worker and self.image_worker.isRunning():
             return # Już pobiera
 

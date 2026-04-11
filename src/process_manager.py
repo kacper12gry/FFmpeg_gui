@@ -1,6 +1,7 @@
 # process_manager.py
 import os
 import re
+import json
 from pathlib import Path
 from datetime import datetime
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal, QStandardPaths
@@ -21,6 +22,10 @@ class ProcessManager(QObject):
         self.debug_mode = False # Domyślnie, ustawiane per zadanie
         log_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
         self.log_file_path = os.path.join(log_dir, "debug_log.txt")
+        
+        # Upewnij się, że katalog logów istnieje raz na starcie
+        os.makedirs(log_dir, exist_ok=True)
+        
         self.current_task = None
         self.is_windows = platform.system() == "Windows"
         self.chained_command_info = None
@@ -31,8 +36,16 @@ class ProcessManager(QObject):
         self.progress_percentage = -1.0
 
     def _start_process(self, program, arguments):
-        if self.process is None:
-            self.output_window.clear()
+        if self.process is not None:
+            # Jeśli istnieje stary proces, odłącz go i zakończ przed startem nowego
+            try:
+                self.process.finished.disconnect()
+            except: pass
+            if self.process.state() != QProcess.ProcessState.NotRunning:
+                self.process.kill()
+            self.process.deleteLater()
+
+        self.output_window.clear()
         self.process = QProcess()
         self.process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
         self.process.readyRead.connect(self.update_output)
@@ -41,60 +54,18 @@ class ProcessManager(QObject):
         self.task_manager.update_list_widget()
         return self.process
 
-    def _run_ffprobe_command(self, command):
-        try:
-            if self.is_windows:
-                # Ukryj okno konsoli w systemie Windows
-                result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=10, creationflags=subprocess.CREATE_NO_WINDOW)
-            else:
-                result = subprocess.run(command, capture_output=True, text=True, check=True, timeout=10)
-            return result.stdout.strip()
-        except Exception as e:
-            self.log_debug(f"Błąd ffprobe: {e}")
-            return None
+    def _run_ffprobe_async(self, command, callback):
+        """Uruchamia ffprobe asynchronicznie za pomocą QProcess."""
+        probe_process = QProcess(self)
+        probe_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        
+        def on_finished():
+            output = bytes(probe_process.readAll()).decode('utf-8', errors='ignore').strip()
+            probe_process.deleteLater()
+            callback(output)
 
-    # --- KRYTYCZNA POPRAWKA ---
-    def _get_video_duration(self, video_path):
-        if not video_path:
-            return 0.0
-        command = ['ffprobe', '-v', 'error', '-show_entries', 'format=duration', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
-        duration_str = self._run_ffprobe_command(command)
-
-        try:
-            return float(duration_str)
-        except (ValueError, TypeError):
-            self.log_message.emit(f"OSTRZEŻENIE: Nie udało się odczytać czasu trwania z pliku '{video_path.name}'. Może być uszkodzony.")
-            return 0.0
-
-    def _get_video_framerate(self, video_path):
-        if not video_path:
-            return None
-        command = ['ffprobe', '-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=r_frame_rate', '-of', 'default=noprint_wrappers=1:nokey=1', str(video_path)]
-        return self._run_ffprobe_command(command)
-
-    def _parse_ffmpeg_time(self, output):
-        speed_match = re.search(r"speed=\s*([\d.]+)x", output)
-        if speed_match:
-            self.current_ffmpeg_speed = f"{speed_match.group(1)}x"
-        if not self.total_duration_seconds or not self.start_time:
-            return
-        time_match = re.search(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})", output)
-        if time_match:
-            h, m, s, _ = map(int, time_match.groups())
-            processed_seconds = h * 3600 + m * 60 + s
-
-            if self.total_duration_seconds > 0:
-                self.progress_percentage = (processed_seconds / self.total_duration_seconds) * 100
-            else:
-                self.progress_percentage = 0
-
-            if processed_seconds > 0:
-                elapsed_time = (datetime.now() - self.start_time).total_seconds()
-                processing_speed = processed_seconds / elapsed_time
-                if processing_speed > 0:
-                    eta_seconds = int((self.total_duration_seconds - processed_seconds) / processing_speed)
-                    self.eta_seconds = eta_seconds
-                    self.eta_updated.emit(eta_seconds)
+        probe_process.finished.connect(on_finished)
+        probe_process.start(command[0], command[1:])
 
     def process_next_task(self):
         if not self.task_manager.has_tasks() or self.is_running():
@@ -105,15 +76,41 @@ class ProcessManager(QObject):
             return
 
         self.debug_mode = self.current_task.debug_mode
-        self.log_terminal("process_next_task called.")
+        self.log_terminal("process_next_task called. Gathering metadata...")
 
-        self.log_terminal(f"Current task script ID: {self.current_task.selected_script}")
-        self.log_terminal(f"Current task encoder ID: {self.current_task.selected_ffmpeg_script}")
+        self.task_manager.mark_current_as_processing("Pobieranie metadanych...")
 
-        self.total_duration_seconds = self._get_video_duration(self.current_task.mkv_file)
+        # Pobieramy czas trwania i framerate w jednym wywołaniu (format JSON dla łatwego parsowania)
+        probe_cmd = [
+            'ffprobe', '-v', 'error', 
+            '-select_streams', 'v:0', 
+            '-show_entries', 'format=duration:stream=r_frame_rate', 
+            '-of', 'json', 
+            str(self.current_task.mkv_file)
+        ]
+        
+        def on_metadata_ready(json_output):
+            duration = 0.0
+            framerate = None
+            try:
+                data = json.loads(json_output)
+                if 'format' in data and 'duration' in data['format']:
+                    duration = float(data['format']['duration'])
+                if 'streams' in data and len(data['streams']) > 0:
+                    framerate = data['streams'][0].get('r_frame_rate')
+            except Exception as e:
+                self.log_terminal(f"Błąd parsowania metadanych: {e}")
+            
+            self.total_duration_seconds = duration
+            self._current_task_framerate = framerate # Zapamiętaj framerate dla skryptów
+            self._continue_task_execution()
+
+        self._run_ffprobe_async(probe_cmd, on_metadata_ready)
+
+    def _continue_task_execution(self):
+        """Kontynuuje wykonywanie zadania po pobraniu metadanych."""
         self.start_time = datetime.now()
-        self.task_manager.mark_current_as_processing("Przygotowywanie...")
-
+        
         script_map = {
             1: lambda task: self.run_ffmpeg(task.mkv_file),
             2: lambda task: self.run_mkvmerge_ffmpeg(task.mkv_file, task.subtitle_file, task.font_folder),
@@ -158,26 +155,31 @@ class ProcessManager(QObject):
             self.process_next_task()
 
     def kill_process(self):
+        """Mocne i pewne zakończenie procesu."""
         self.eta_updated.emit(-1)
         self.current_ffmpeg_speed = None
         self.eta_seconds = -1
         self.progress_percentage = -1.0
-        if self.is_running():
+        
+        if self.process:
             try:
                 self.process.finished.disconnect()
-            except Exception:
-                pass
-            self.process.kill()
-            # Czekaj maksymalnie 500ms na kulturalne zakończenie, potem idź dalej
-            self.process.waitForFinished(500)
-        self.process = None
+            except: pass
+            
+            if self.process.state() != QProcess.ProcessState.NotRunning:
+                self.process.terminate() # Najpierw grzecznie
+                if not self.process.waitForFinished(1000):
+                    self.process.kill() # Potem brutalnie
+                    self.process.waitForFinished(1000)
+            
+            self.process.deleteLater()
+            self.process = None
+        
         self.current_task = None
 
     def kill_process_and_advance(self):
         self.kill_process()
         self.process_next_task()
-
-
 
     def run_mkvmerge(self, mkv_file, subtitle_file, font_folder):
         mkv_path, _, font_path = Path(mkv_file), Path(subtitle_file), Path(font_folder)
@@ -192,7 +194,7 @@ class ProcessManager(QObject):
         # --- TWOJA POPRAWNA LOGIKA ---
         track_name = self.current_task.subtitle_track_name.strip() or ""
         movie_name = self.current_task.movie_name
-        audio_id = str(self.current_task.selected_audio_track_id) if self.current_task.selected_audio_track_id is not None else "1"
+        audio_id = str(self.current_task.selected_audio_track_id) if self.current_task.selected_audio_track_id is not None else "0"
 
         args = ["-o", str(output_file), "--audio-tracks", audio_id, "--no-subtitles",
                 "--no-track-tags", "--no-chapters", "--no-attachments", str(mkv_file),
@@ -223,7 +225,7 @@ class ProcessManager(QObject):
         # --- TWOJA POPRAWNA LOGIKA ---
         track_name = self.current_task.subtitle_track_name.strip() or ""
         movie_name = self.current_task.movie_name
-        audio_id = str(self.current_task.selected_audio_track_id) if self.current_task.selected_audio_track_id is not None else "1"
+        audio_id = str(self.current_task.selected_audio_track_id) if self.current_task.selected_audio_track_id is not None else "0"
 
         # --- MAŁA KOREKTA ZMIENNEJ ---
         args = ["-o", str(output_file_remux), "--audio-tracks", audio_id, "--no-subtitles",
@@ -247,31 +249,74 @@ class ProcessManager(QObject):
         self._start_process(program, args)
 
 
+    def _parse_ffmpeg_time(self, output):
+        speed_match = re.search(r"speed=\s*([\d.]+)x", output)
+        if speed_match:
+            self.current_ffmpeg_speed = f"{speed_match.group(1)}x"
+        if not self.total_duration_seconds or not self.start_time:
+            return
+        time_match = re.search(r"time=(\d{2}):(\d{2}):(\d{2})\.(\d{2})", output)
+        if time_match:
+            h, m, s, _ = map(int, time_match.groups())
+            processed_seconds = h * 3600 + m * 60 + s
+
+            if self.total_duration_seconds > 0:
+                self.progress_percentage = (processed_seconds / self.total_duration_seconds) * 100
+            else:
+                self.progress_percentage = 0
+
+            if processed_seconds > 0:
+                elapsed_time = (datetime.now() - self.start_time).total_seconds()
+                processing_speed = processed_seconds / elapsed_time
+                if processing_speed > 0:
+                    eta_seconds = int((self.total_duration_seconds - processed_seconds) / processing_speed)
+                    self.eta_seconds = eta_seconds
+                    self.eta_updated.emit(eta_seconds)
+
     def is_running(self):
         return self.process is not None and self.process.state() == QProcess.ProcessState.Running
 
     def _get_safe_path_for_ffmpeg(self, file_path):
-        if not self.is_windows:
-            return str(file_path)
-        return str(file_path).replace('\\', '\\\\').replace(':', '\\:')
+        # Konwersja na ciąg znaków
+        path_str = str(file_path)
+        
+        # Escape'owanie znaków specjalnych dla filtru FFmpeg na wszystkich platformach:
+        # 1. Backslash (znak ucieczki) - musi być pierwszy!
+        path_str = path_str.replace('\\', '\\\\')
+        # 2. Dwukropek (separator opcji w filtrach)
+        path_str = path_str.replace(':', '\\:')
+        # 3. Apostrof (separator ciągu znaków)
+        path_str = path_str.replace("'", "\\'")
+        # 4. Nawiasy kwadratowe (mogą być interpretowane jako tagi w grafie filtrów)
+        path_str = path_str.replace('[', '\\[').replace(']', '\\]')
+        
+        return path_str
 
     def update_output(self):
         if self.process:
             output = bytes(self.process.readAll()).decode('utf-8', errors='ignore')
-            self.output_window.append(output)
+            # Używamy insertPlainText zamiast append, aby uniknąć zbędnych nowych linii
+            # i zachować naturalny przepływ tekstu z procesu.
+            cursor = self.output_window.textCursor()
+            cursor.movePosition(cursor.MoveOperation.End)
+            cursor.insertText(output)
+            self.output_window.setTextCursor(cursor)
+            self.output_window.ensureCursorVisible()
+            
             self._parse_ffmpeg_time(output)
             if self.debug_mode:
                 self.log_debug(output)
 
     def run_ffmpeg(self, mkv_file, is_final=False):
         mkv_path = Path(mkv_file)
-        subtitle_path = self._get_safe_path_for_ffmpeg(mkv_path)
-
+        
         # Integracja niestandardowej ścieżki
         if is_final and self.current_task and self.current_task.output_path:
             output_file = self.current_task.output_path
         else:
-            output_file = mkv_path.with_name(mkv_path.name.replace("_remux.mkv" if is_final else ".mkv", "_hardsub.mp4"))
+            # Używamy suffix/with_suffix dla bezpieczniejszej zamiany rozszerzenia
+            new_name = mkv_path.name.replace("_remux.mkv", "_hardsub.mp4") if "_remux.mkv" in mkv_path.name else mkv_path.with_suffix(".mp4").name.replace(".mp4", "_hardsub.mp4")
+            output_file = mkv_path.with_name(new_name)
 
         subtitle_path = self._get_safe_path_for_ffmpeg(mkv_path)
 
@@ -310,7 +355,9 @@ class ProcessManager(QObject):
         program = "ffmpeg"
         subtitle_path = self._get_safe_path_for_ffmpeg(mkv_path)
         bitrate = self.current_task.gpu_bitrate
-        framerate = self._get_video_framerate(mkv_path)
+        
+        # Użyj framerate pobranego wcześniej asynchronicznie
+        framerate = getattr(self, '_current_task_framerate', None)
         framerate_arg = ["-r:v", framerate] if framerate else []
 
         audio_filter = "[0:a:0]loudnorm=I=-20:LRA=10:tp=-1.8[a_intro_norm];[1:a:0]loudnorm=I=-20:LRA=10:tp=-1.8[a_main_norm];[a_intro_norm][a_main_norm]concat=n=2:v=0:a=1[a_out]"
@@ -390,10 +437,6 @@ class ProcessManager(QObject):
     def log_debug(self, message):
         if not self.debug_mode:
             return
-        # Poprawka zapewniająca tworzenie katalogu logów
-        log_dir = os.path.dirname(self.log_file_path)
-        if log_dir and not os.path.exists(log_dir):
-            os.makedirs(log_dir)
         with open(self.log_file_path, "a", encoding='utf-8') as log_file:
             log_file.write(f"{datetime.now()}: {message}\n")
 

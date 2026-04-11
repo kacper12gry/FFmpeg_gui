@@ -1,2 +1,2 @@
-__version__ = "5.3 Anniversary Edition"
-latest_release_tag = "v5.3"
+__version__ = "5.4"
+latest_release_tag = "v5.4"

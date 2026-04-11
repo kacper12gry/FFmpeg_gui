@@ -1,4 +1,4 @@
-# # component_selection_dialog.py (Wersja finalna: stary, stabilny kod + moduł importu)
+# # component_selection_dialog.py
 
 import os
 import platform
@@ -9,10 +9,11 @@ from PyQt6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QPushButton, QFileDia
                              QRadioButton, QButtonGroup, QSpinBox, QCheckBox,
                              QDialogButtonBox, QMessageBox, QHBoxLayout, QLineEdit,
                              QToolButton, QStyle, QTabWidget, QWidget, QGroupBox,
-                             QComboBox, QInputDialog)
+                             QComboBox, QInputDialog, QFormLayout)
 from PyQt6.QtCore import Qt, QSettings
 from mkv_info_dialog import MkvInfoDialog
 from batch_import_logic import BatchImportLogic
+from frixy_mode_manager import FrixyModeManager
 
 class ComponentSelectionDialog(QDialog):
     def __init__(self, use_per_option_paths=False, parent=None, is_flatpak=False):
@@ -24,13 +25,18 @@ class ComponentSelectionDialog(QDialog):
         self.setGeometry(100, 100, 650, 650)
         self.setAcceptDrops(True)
         self.settings = QSettings("settings.ini", QSettings.Format.IniFormat)
+        self.frixy_mode = self.settings.value("frixy_mode", False, type=bool)
+        self.frixy_series_data = {}
+        
         self.batch_import_handler = BatchImportLogic(self)
         self.tasks_to_return = [] # Nowa zmienna do przechowywania zadań do zwrócenia
         self.mkv_file, self.subtitle_file, self.font_folder, self.intro_file = None, None, None, None
+        self.last_mkv_file = None # Śledzenie ostatniego pliku MKV
         self.output_path = None
         self.default_output_name = ""
 
         self._setup_ui()
+        self._init_frixy_data()
         self._connect_signals()
         self.update_ui_state()
         self._load_suffixes()
@@ -142,6 +148,73 @@ class ComponentSelectionDialog(QDialog):
         output_tab_layout.addWidget(self.output_disabled_label)
         self.output_group = QGroupBox("Lokalizacja i nazwa pliku końcowego")
         output_layout = QVBoxLayout(self.output_group)
+        
+        # --- SEKCJA TRYBU FRIXY ---
+        if self.frixy_mode:
+            self.frixy_group = QGroupBox("Dane Serii (Tryb Frixy)")
+            f_layout = QVBoxLayout(self.frixy_group)
+            
+            f_form = QFormLayout()
+            
+            yl = QHBoxLayout()
+            self.frixy_year_combo = QComboBox()
+            self.frixy_season_combo = QComboBox()
+            yl.addWidget(self.frixy_year_combo)
+            yl.addWidget(self.frixy_season_combo)
+            
+            self.frixy_series_combo = QComboBox()
+            
+            ep_lay = QHBoxLayout()
+            self.frixy_episode_input = QLineEdit()
+            self.frixy_episode_input.setFixedWidth(70)
+            self.frixy_abs_label = QLabel("(Abs: --)")
+            self.frixy_abs_label.setStyleSheet("color: #E67E22; font-weight: bold;")
+            ep_lay.addWidget(self.frixy_episode_input)
+            ep_lay.addWidget(self.frixy_abs_label)
+            ep_lay.addStretch()
+            
+            f_form.addRow("Rok / Sezon:", yl)
+            f_form.addRow("Seria:", self.frixy_series_combo)
+            f_form.addRow("Odcinek:", ep_lay)
+            
+            # Tagi dla Frixy
+            tag_layout = QHBoxLayout()
+            self.frixy_tag_res = QComboBox()
+            self.frixy_tag_res.addItems(["1080p", "720p", "2160p"])
+            self.frixy_tag_src = QComboBox()
+            self.frixy_tag_src.addItems(["CR WEB-DL", "HIDIVE WEB-DL", "AMZN WEB-DL", "NF WEB-DL", "WEB-Rip", "BD"])
+            self.frixy_tag_v = QComboBox()
+            self.frixy_tag_v.addItems(["H.264", "HEVC"])
+            self.frixy_tag_a = QComboBox()
+            self.frixy_tag_a.addItems(["AAC", "FLAC", "E-AC3", "OPUS"])
+            
+            tag_layout.addWidget(QLabel("Res:"))
+            tag_layout.addWidget(self.frixy_tag_res)
+            tag_layout.addWidget(QLabel("Src:"))
+            tag_layout.addWidget(self.frixy_tag_src)
+            tag_layout.addWidget(QLabel("Vid:"))
+            tag_layout.addWidget(self.frixy_tag_v)
+            tag_layout.addWidget(QLabel("Aud:"))
+            tag_layout.addWidget(self.frixy_tag_a)
+            
+            # Przycisk podmiany nazwy
+            self.frixy_apply_name_button = QPushButton("Podmień nazwę pliku")
+            f_layout.addLayout(f_form)
+            f_layout.addLayout(tag_layout)
+            f_layout.addWidget(self.frixy_apply_name_button)
+            output_tab_layout.addWidget(self.frixy_group)
+            
+            # Podłączenie sygnałów
+            self.frixy_apply_name_button.clicked.connect(self._on_apply_frixy_name_clicked)
+            self.frixy_year_combo.currentIndexChanged.connect(self._on_frixy_year_changed)
+            self.frixy_season_combo.currentIndexChanged.connect(self._on_frixy_season_changed)
+            self.frixy_series_combo.currentIndexChanged.connect(self._on_frixy_series_changed)
+            self.frixy_episode_input.textChanged.connect(self._update_frixy_preview)
+            self.frixy_tag_res.currentIndexChanged.connect(self._update_frixy_preview)
+            self.frixy_tag_src.currentIndexChanged.connect(self._update_frixy_preview)
+            self.frixy_tag_v.currentIndexChanged.connect(self._update_frixy_preview)
+            self.frixy_tag_a.currentIndexChanged.connect(self._update_frixy_preview)
+
         self.custom_output_checkbox = QCheckBox("Użyj niestandardowych ustawień wyjściowych")
         output_layout.addWidget(self.custom_output_checkbox)
         location_layout = QHBoxLayout()
@@ -189,7 +262,7 @@ class ComponentSelectionDialog(QDialog):
         ffmpeg_group = QGroupBox("Ustawienia enkodera")
         ffmpeg_layout = QVBoxLayout(ffmpeg_group)
         self.ffmpeg_script_label = QLabel("Wybierz skrypt FFmpeg (dla opcji z FFmpeg):")
-        self.script1_radio = QRadioButton("CPU (CRF)")
+        self.script1_radio = QRadioButton("CPU")
         self.script2_radio = QRadioButton("GPU (Nvidia CUDA)")
         self.script3_radio = QRadioButton("GPU (Intel i AMD VA-API H264)")
         self.script4_radio = QRadioButton("GPU (Intel i AMD VA-API AV1)")
@@ -383,7 +456,7 @@ class ComponentSelectionDialog(QDialog):
         # Aktualizacja kontrolek bitrate
         ffmpeg_encoder_id = self.script_button_group.checkedId()
         is_gpu_script_selected = ffmpeg_encoder_id in [2, 3, 4]
-        bitrate_is_relevant = ffmpeg_encoder_options_enabled and is_gpu_script_selected
+        bitrate_is_relevant = ffmpeg_encoder_options_enabled and (is_gpu_script_selected or selected_id == 4)
 
         self.bitrate_label.setEnabled(bitrate_is_relevant)
         self.bitrate_spinbox.setEnabled(bitrate_is_relevant)
@@ -418,15 +491,18 @@ class ComponentSelectionDialog(QDialog):
 
     def _update_output_name_and_warnings(self, selected_id):
         """Aktualizuje domyślną nazwę wyjściową i wyświetla ostrzeżenia."""
-        if not self.custom_output_checkbox.isChecked():
+        # Jeśli nie ma Trybu Frixy i nie ma niestandardowych ustawień - aktualizuj automatycznie
+        if not self.custom_output_checkbox.isChecked() and not self.frixy_mode:
             self.output_name_edit.setText(self._generate_default_output_name())
         else:
-            # Jeśli użytkownik ma własną nazwę, upewnij się, że rozszerzenie pasuje do trybu
+            # W Trybie Frixy lub przy własnych ustawieniach, tylko korygujemy rozszerzenie jeśli potrzeba
             current_text = self.output_name_edit.text()
-            if current_text:
+            if not current_text and not self.custom_output_checkbox.isChecked():
+                # Jeśli pole jest puste (np. start aplikacji), ustaw domyślną standardową
+                self.output_name_edit.setText(self._generate_default_output_name())
+            elif current_text:
                 p = Path(current_text)
                 target_ext = ".mp4" if selected_id in [1, 4] else ".mkv"
-                # Zmień rozszerzenie tylko jeśli jest inne i nazwa nie kończy się już poprawnie
                 if p.suffix.lower() != target_ext:
                     new_text = f"{p.stem}{target_ext}"
                     self.output_name_edit.setText(new_text)
@@ -489,19 +565,40 @@ class ComponentSelectionDialog(QDialog):
             print(f"Błąd podczas skanowania ścieżek audio: {e}")
 
     def update_file_labels(self):
+        mkv_changed = self.mkv_file != self.last_mkv_file
+        self.last_mkv_file = self.mkv_file
+        
         if self.mkv_file:
             self.mkv_label.setText(f"Plik MKV: {self.mkv_file.name}")
             self._scan_audio_tracks() # NOWE: Skanuj ścieżki przy wyborze pliku
+            
+            if self.frixy_mode:
+                manager = FrixyModeManager.get_instance()
+                meta = manager.parse_source_filename(self.mkv_file.name)
+                self.frixy_episode_input.setText(meta['ep'])
+                self.frixy_tag_res.setCurrentText(meta['res'])
+                self.frixy_tag_src.setCurrentText(meta['source'])
+                self.frixy_tag_v.setCurrentText(meta['v_codec'])
+                self.frixy_tag_a.setCurrentText(meta['a_codec'])
+
         if self.intro_file:
             self.intro_label.setText(f"Plik wstawki: {self.intro_file.name}")
         if self.subtitle_file:
             self.subtitle_label.setText(f"Plik napisów: {self.subtitle_file.name}")
         if self.font_folder:
             self.font_label.setText(f"Folder czcionek: {self.font_folder.name}")
+        
         default_name = self._generate_default_output_name()
         self.default_output_name = default_name
+        
+        # Jeśli nie używamy niestandardowych ustawień i NIE jest to tryb Frixy, aktualizuj zawsze.
+        # W trybie Frixy aktualizujemy tylko gdy pole jest puste (nowy plik) LUB zmienił się plik MKV.
         if not self.custom_output_checkbox.isChecked():
-            self.output_name_edit.setText(default_name)
+            if not self.frixy_mode:
+                self.output_name_edit.setText(default_name)
+            elif not self.output_name_edit.text() or mkv_changed:
+                self.output_name_edit.setText(default_name)
+                
         self._load_suffixes()
 
     def select_output_directory(self):
@@ -545,21 +642,28 @@ class ComponentSelectionDialog(QDialog):
 
         # Sprawdź, czy użytkownik chce użyć niestandardowych ustawień.
         output_path = None
-        if self.custom_output_checkbox.isChecked():
-            # Jeśli tak, zweryfikuj podane przez niego ścieżki.
+        if self.custom_output_checkbox.isChecked() or self.frixy_mode:
+            # Jeśli Frixy Mode jest aktywny, lub użytkownik wybrał własne ustawienia, pobierz dane z pól
             output_dir = self.output_dir_edit.text()
             output_name = self.output_name_edit.text()
+            
+            # Jeśli tryb Frixy jest włączony, ale nie ma folderu wyjściowego, użyj folderu źródłowego
+            if self.frixy_mode and not output_dir and self.mkv_file:
+                output_dir = str(self.mkv_file.parent)
+                
             if not output_dir or not output_name:
-                QMessageBox.warning(self, "Błąd", "W niestandardowych ustawieniach folder i nazwa pliku nie mogą być puste.")
-                return
-            if not os.path.isdir(output_dir):
-                QMessageBox.warning(self, "Błąd", "Wybrany folder wyjściowy nie istnieje.")
-                return
-            # Ustaw pełną, niestandardową ścieżkę wyjściową.
-            output_path = Path(output_dir) / output_name
+                if not self.frixy_mode: # W trybie Frixy błędy obsłużymy inaczej lub zignorujemy jeśli są domyślne
+                    QMessageBox.warning(self, "Błąd", "W niestandardowych ustawieniach folder i nazwa pliku nie mogą być puste.")
+                    return
+            
+            if output_dir and output_name:
+                if os.path.isdir(output_dir):
+                    output_path = Path(output_dir) / output_name
+                else:
+                    QMessageBox.warning(self, "Błąd", "Wybrany folder wyjściowy nie istnieje.")
+                    return
         else:
-            # Jeśli checkbox jest ODZNACZONY, jawnie ustawiamy ścieżkę na None.
-            # To jest sygnał dla ProcessManagera, aby sam wygenerował domyślną ścieżkę.
+            # Jeśli checkbox jest ODZNACZONY i nie ma trybu Frixy, jawnie ustawiamy ścieżkę na None.
             output_path = None
 
         # Skrypt typu 2 nigdy nie używa ścieżki wyjściowej, więc dla pewności ją zerujemy.
@@ -607,6 +711,101 @@ class ComponentSelectionDialog(QDialog):
         self._validate_inputs()
         event.acceptProposedAction()
         self.update_ui_state()
+
+    def _init_frixy_data(self):
+        if not self.frixy_mode:
+            return
+        
+        manager = FrixyModeManager.get_instance()
+        url = self.settings.value("frixy_series_url", "https://raw.githubusercontent.com/Intro33/frixy-series/refs/heads/main/series.json")
+        self.frixy_series_data = manager.fetch_data(url)
+            
+        years = sorted([str(k) for k in self.frixy_series_data.keys()], reverse=True)
+        self.frixy_year_combo.blockSignals(True)
+        self.frixy_year_combo.clear()
+        self.frixy_year_combo.addItems(years)
+        self.frixy_year_combo.blockSignals(False)
+        
+        y, s = manager.get_current_season_year()
+        if y in years:
+            self.frixy_year_combo.setCurrentText(y)
+        self._on_frixy_year_changed()
+        
+        idx = self.frixy_season_combo.findText(s)
+        if idx >= 0:
+            self.frixy_season_combo.setCurrentIndex(idx)
+        self._on_frixy_season_changed()
+
+    def _on_frixy_year_changed(self):
+        y = self.frixy_year_combo.currentText()
+        data = self.frixy_series_data.get(y, {})
+        self.frixy_season_combo.blockSignals(True)
+        self.frixy_season_combo.clear()
+        self.frixy_season_combo.addItems(data.keys())
+        self.frixy_season_combo.blockSignals(False)
+        self._on_frixy_season_changed()
+
+    def _on_frixy_season_changed(self):
+        y = self.frixy_year_combo.currentText()
+        s = self.frixy_season_combo.currentText()
+        list_s = self.frixy_series_data.get(y, {}).get(s, [])
+        self.frixy_series_combo.blockSignals(True)
+        self.frixy_series_combo.clear()
+        for i in list_s:
+            title = i['title'] if isinstance(i, dict) else i
+            self.frixy_series_combo.addItem(title, i)
+        self.frixy_series_combo.blockSignals(False)
+        self._update_frixy_preview()
+
+    def _on_frixy_series_changed(self):
+        self._update_frixy_preview()
+
+    def _update_frixy_preview(self):
+        if not self.frixy_mode:
+            return
+            
+        s = self.frixy_series_combo.currentData()
+        ep = self.frixy_episode_input.text()
+        
+        if ep.isdigit() and isinstance(s, dict):
+            abs_start = s.get('absolute_episode_start', 0)
+            if abs_start > 0:
+                self.frixy_abs_label.setText(f"(Abs: {abs_start + int(ep) - 1})")
+            else:
+                self.frixy_abs_label.setText("(Abs: --)")
+        else:
+            self.frixy_abs_label.setText("(Abs: --)")
+
+    def _on_apply_frixy_name_clicked(self):
+        """Wywoływane po kliknięciu przycisku 'Podmień nazwę pliku' w trybie Frixy."""
+        if self.mkv_file:
+            new_name = self._generate_frixy_output_name()
+            if new_name:
+                self.output_name_edit.setText(new_name)
+            else:
+                QMessageBox.warning(self, "Błąd", "Nie udało się wygenerować nowej nazwy. Sprawdź czy wybrano serię.")
+        else:
+            QMessageBox.warning(self, "Błąd", "Najpierw wybierz plik MKV.")
+
+    def _generate_frixy_output_name(self):
+        if not self.mkv_file:
+            return ""
+            
+        s = self.frixy_series_combo.currentData()
+        if not s:
+            return ""
+            
+        episode_number = self.frixy_episode_input.text()
+        tags = {
+            "res": self.frixy_tag_res.currentText(),
+            "source": self.frixy_tag_src.currentText(),
+            "v_codec": self.frixy_tag_v.currentText(),
+            "a_codec": self.frixy_tag_a.currentText()
+        }
+        
+        return FrixyModeManager.get_instance().generate_output_name(
+            s, episode_number, tags, self.button_group.checkedId()
+        )
 
     def _validate_inputs(self, show_error=False):
         ok_button = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
