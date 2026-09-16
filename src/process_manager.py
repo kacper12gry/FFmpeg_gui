@@ -19,6 +19,7 @@ class ProcessManager(QObject):
         self.output_window = output_window
         self.rpc_manager = rpc_manager
         self.process = None
+        self.vaapi_device = self._detect_vaapi_device()
         self.debug_mode = False # Domyślnie, ustawiane per zadanie
         log_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
         self.log_file_path = os.path.join(log_dir, "debug_log.txt")
@@ -276,6 +277,16 @@ class ProcessManager(QObject):
     def is_running(self):
         return self.process is not None and self.process.state() == QProcess.ProcessState.Running
 
+    @staticmethod
+    def _detect_vaapi_device():
+        try:
+            nodes = sorted(Path("/dev/dri").glob("renderD*"))
+            if nodes:
+                return str(nodes[0])
+        except Exception:
+            pass
+        return "/dev/dri/renderD128"
+
     def _get_safe_path_for_ffmpeg(self, file_path):
         # Konwersja na ciąg znaków
         path_str = str(file_path)
@@ -391,22 +402,28 @@ class ProcessManager(QObject):
         elif self.current_task.selected_ffmpeg_script in [2, 3, 4]:
             self.log_terminal("Using GPU path for intro script.")
             video_filter_cpu = f"[1:v]subtitles='{subtitle_path}'[v_subs];[0:v][v_subs]concat=n=2:v=1:a=0[v_cpu]"
-            
+
             if self.current_task.selected_ffmpeg_script == 2:
                 self.log_terminal("Using CUDA path.")
-                hw_accel_args = ["-hwaccel", "cuda"]
+                hw_accel_args = ["-init_hw_device", "cuda=cu:0",
+                                 "-filter_hw_device", "cu",
+                                 "-hwaccel", "cuda"]
                 filter_complex = f"{video_filter_cpu};[v_cpu]hwupload_cuda[v_out];{audio_filter}"
                 video_codec_args = ["-c:v", "h264_nvenc", "-preset", "p2"]
 
             elif self.current_task.selected_ffmpeg_script == 3:
                 self.log_terminal("Using VA-API H264 path.")
-                hw_accel_args = ["-hwaccel", "vaapi"]
+                hw_accel_args = ["-init_hw_device", f"vaapi=va:{self.vaapi_device}",
+                                 "-filter_hw_device", "va",
+                                 "-hwaccel", "vaapi"]
                 filter_complex = f"{video_filter_cpu};[v_cpu]format=nv12,hwupload[v_out];{audio_filter}"
                 video_codec_args = ["-c:v", "h264_vaapi", "-profile:v", "high"]
-            
+
             elif self.current_task.selected_ffmpeg_script == 4:
                 self.log_terminal("Using VA-API AV1 path.")
-                hw_accel_args = ["-hwaccel", "vaapi"]
+                hw_accel_args = ["-init_hw_device", f"vaapi=va:{self.vaapi_device}",
+                                 "-filter_hw_device", "va",
+                                 "-hwaccel", "vaapi"]
                 filter_complex = f"{video_filter_cpu};[v_cpu]format=nv12,hwupload[v_out];{audio_filter}"
                 video_codec_args = ["-c:v", "av1_vaapi"]
 
