@@ -10,10 +10,10 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout,
     QWidget, QListWidget, QAbstractItemView, QMessageBox, QDialog,
     QGroupBox, QSplitter, QStyleFactory, QLabel, QSystemTrayIcon, QCheckBox,
-    QFrame, QSizePolicy
+    QSizePolicy
 )
-from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl, QTime, QSignalBlocker
-from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices, QPalette, QColor
+from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl, QSignalBlocker
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices
 from packaging.version import parse
 
 # Importy lokalnych modułów
@@ -712,8 +712,8 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, "O programie", f"Automatyzer by kacper12gry\nVersion {self.app_version}\n\nInteligentny automatyzer przepływów pracy wideo.\nZaprojektowany, by przyspieszyć i ułatwić zadania takie jak remux kontenerów MKV, wypalanie napisów oraz dodawanie wstawek.\n\nDziała na: {platform_name}")
 
     def refresh_program(self):
-        self.close()
-        QProcess.startDetached(sys.executable, sys.argv)
+        if self.close():   # close() zwraca False, gdy użytkownik anulował zamknięcie
+            QProcess.startDetached(sys.executable, sys.argv)
 
     def change_layout(self, layout_type):
         """Zmienia typ układu i informuje o konieczności restartu."""

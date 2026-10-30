@@ -6,7 +6,6 @@ from pathlib import Path
 from datetime import datetime
 from PyQt6.QtCore import QObject, QProcess, pyqtSignal, QStandardPaths
 import platform
-import subprocess
 
 class ProcessManager(QObject):
     eta_updated = pyqtSignal(int)
@@ -19,6 +18,8 @@ class ProcessManager(QObject):
         self.output_window = output_window
         self.rpc_manager = rpc_manager
         self.process = None
+        self._probing = False   # trwa pobieranie metadanych (ffprobe) - zadanie 0 jest już aktywne
+        self._probe_id = 0      # unieważnia spóźnioną odpowiedź ffprobe po anulowaniu
         self.vaapi_device = self._detect_vaapi_device()
         self.debug_mode = False # Domyślnie, ustawiane per zadanie
         log_dir = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation)
@@ -56,16 +57,29 @@ class ProcessManager(QObject):
         return self.process
 
     def _run_ffprobe_async(self, command, callback):
-        """Uruchamia ffprobe asynchronicznie za pomocą QProcess."""
+        """Uruchamia ffprobe asynchronicznie za pomocą QProcess. callback wołany dokładnie raz."""
         probe_process = QProcess(self)
         probe_process.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
-        
-        def on_finished():
-            output = bytes(probe_process.readAll()).decode('utf-8', errors='ignore').strip()
+        done = False
+
+        def finish(output):
+            nonlocal done
+            if done:
+                return
+            done = True
             probe_process.deleteLater()
             callback(output)
 
+        def on_finished():
+            finish(bytes(probe_process.readAll()).decode('utf-8', errors='ignore').strip())
+
+        def on_error(error):
+            # Bez tego brak ffprobe zawieszał kolejkę na "Pobieranie metadanych..."
+            if error == QProcess.ProcessError.FailedToStart:
+                finish("")
+
         probe_process.finished.connect(on_finished)
+        probe_process.errorOccurred.connect(on_error)
         probe_process.start(command[0], command[1:])
 
     def process_next_task(self):
@@ -90,7 +104,14 @@ class ProcessManager(QObject):
             str(self.current_task.mkv_file)
         ]
         
+        self._probe_id += 1
+        probe_id = self._probe_id
+        self._probing = True
+
         def on_metadata_ready(json_output):
+            if probe_id != self._probe_id:
+                return   # zadanie anulowane w trakcie ffprobe - ignoruj spóźnioną odpowiedź
+            self._probing = False
             duration = 0.0
             framerate = None
             try:
@@ -157,6 +178,8 @@ class ProcessManager(QObject):
 
     def kill_process(self):
         """Mocne i pewne zakończenie procesu."""
+        self._probe_id += 1     # unieważnij ewentualny trwający ffprobe
+        self._probing = False
         self.eta_updated.emit(-1)
         self.current_ffmpeg_speed = None
         self.eta_seconds = -1
@@ -275,6 +298,8 @@ class ProcessManager(QObject):
                     self.eta_updated.emit(eta_seconds)
 
     def is_running(self):
+        if self._probing:
+            return True
         return self.process is not None and self.process.state() == QProcess.ProcessState.Running
 
     @staticmethod
