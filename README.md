@@ -1,10 +1,13 @@
 # Automatyzer
 
-Główne funkcje:
-    <ul>
-      <li>Remuxowanie kontenerów wideo.
-      <li>Dołączanie i wypalanie napisów.
-    </ul>
+Graficzna nakładka na FFmpeg i MKVToolNix do przygotowywania odcinków z napisami.
+
+## Główne funkcje
+- Remuxowanie kontenerów wideo (dołączanie napisów i czcionek przez mkvmerge).
+- Wypalanie napisów (hardsub) – osadzonych w MKV lub z zewnętrznego pliku `.ass` z folderem czcionek.
+- Doklejanie wstawki (intro) z normalizacją głośności.
+- Kolejka zadań z importem z pliku TXT, presetami i podglądem postępu.
+- Kodowanie na CPU lub GPU (NVIDIA CUDA, Intel/AMD VA-API, w tym AV1 przez VA-API).
 
 ## Instalacja / Uruchomienie (Plik ZIP)
 
@@ -18,7 +21,7 @@ Uruchomienie:
 python3 main.py
 
 ```
-<b>Linux * <br> W zależności od dystrybucji będzie wymagane doinstalowanie dodatkowych zależności do systemu.</B>
+**Linux:** w zależności od dystrybucji może być wymagane doinstalowanie dodatkowych bibliotek systemowych.
 
 #### Ubuntu / Debian / Pop!_OS
 ```bash
@@ -34,8 +37,8 @@ sudo dnf install libxcb xcb-util-cursor xcb-util-image xcb-util-keysyms xcb-util
 sudo pacman -Syu libxcb xcb-util xcb-util-image xcb-util-keysyms xcb-util-renderutil libxkbcommon-x11
 ```
 
-### Wymagania
-- Python  3.11+
-- FFmpeg 4.2-7.1 (zalecane 7.1)
+## Wymagania
+- Python 3.11+
+- FFmpeg 5.1+ (zalecane 8.0.x; kodowanie AV1 przez VA-API wymaga 6.0+)
 - MKVToolNix
 
