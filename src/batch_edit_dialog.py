@@ -264,7 +264,7 @@ class BatchEditDialog(QDialog):
         script_type = self.script_combo.currentIndex() + 1
         encoder_type = self.encoder_combo.currentIndex() + 1
 
-        needs_subtitles = script_type in [1, 2, 3]
+        needs_subtitles = script_type in [1, 2, 3]   # dla skryptu 1 opcjonalne (puste = z MKV)
         needs_intro = script_type == 4
         needs_ffmpeg = script_type in [1, 2, 4]
         needs_bitrate = (needs_ffmpeg and encoder_type in [2, 3]) or script_type == 4
@@ -307,7 +307,7 @@ class BatchEditDialog(QDialog):
 
     def _create_script_combo(self):
         combo = QComboBox()
-        combo.addItems(["1: Hardsub", "2: Remux+Hardsub", "3: Remux", "4: Wstawka"])
+        combo.addItems(["1: Hardsub", "2: Remux+Hardsub (przestarzałe)", "3: Remux", "4: Wstawka"])
         return combo
 
     def _create_encoder_combo(self):

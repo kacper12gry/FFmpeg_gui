@@ -112,11 +112,25 @@ class ComponentSelectionDialog(QDialog):
         input_layout.addWidget(self.subtitle_button)
         input_layout.addWidget(self.font_label)
         input_layout.addWidget(self.font_button)
+        # Tylko dla skryptu 1: napisy/czcionki są opcjonalne
+        self.subs_hint_label = QLabel("Tylko FFmpeg: napisy i czcionki są opcjonalne. Puste = napisy i czcionki osadzone w MKV.")
+        self.subs_hint_label.setWordWrap(True)
+        self.subs_hint_label.setStyleSheet("color: gray;")
+        self.clear_subs_button = QPushButton("Użyj napisów z MKV (wyczyść napisy i czcionki)")
+        self.clear_subs_button.clicked.connect(self.clear_external_subtitles)
+        input_layout.addWidget(self.subs_hint_label)
+        input_layout.addWidget(self.clear_subs_button)
         main_tab_layout.addWidget(input_group)
         script_group = QGroupBox("Skrypty")
         script_layout = QVBoxLayout(script_group)
         self.ffmpeg_radio = QRadioButton("Użyj tylko FFmpeg (hardsub)")
-        self.mkvmerge_ffmpeg_radio = QRadioButton("Użyj mkvmerge i FFmpeg")
+        self.ffmpeg_radio.setToolTip("Bez wybranych napisów: wypala napisy osadzone w MKV (czcionki z załączników MKV).\nZ wybranymi napisami: wypala zewnętrzny plik .ass (czcionki z wybranego folderu i systemu).")
+        self.mkvmerge_ffmpeg_radio = QRadioButton("Użyj mkvmerge i FFmpeg (przestarzałe)")
+        self.mkvmerge_ffmpeg_radio.setToolTip("Stara opcja zachowana dla kompatybilności (stare presety, import TXT z typem 2).")
+        # Ukryta dla nowych zadań. Pokazuje się tylko, gdy wybierze ją stary preset,
+        # żeby użytkownik widział, co jest zaznaczone. Po zmianie na inną opcję znowu znika.
+        self.mkvmerge_ffmpeg_radio.setVisible(False)
+        self.mkvmerge_ffmpeg_radio.toggled.connect(self.mkvmerge_ffmpeg_radio.setVisible)
         self.mkvmerge_radio = QRadioButton("Użyj tylko mkvmerge (remux)")
         self.ffmpeg_intro_radio = QRadioButton("FFmpeg + Wstawka (intro)")
         self.mkvmerge_radio.setChecked(True)
@@ -415,7 +429,11 @@ class ComponentSelectionDialog(QDialog):
         self.suffix_group.setVisible(not is_output_tab_disabled)
         self.output_disabled_label.setVisible(is_output_tab_disabled)
 
+        # Skrypt 1: napisy/czcionki opcjonalne (puste = osadzone w MKV). Skrypty 2 i 3: wymagane.
         needs_subtitles = selected_id in [1, 2, 3]
+        is_ffmpeg_only = selected_id == 1
+        self.subs_hint_label.setVisible(is_ffmpeg_only)
+        self.clear_subs_button.setVisible(is_ffmpeg_only and bool(self.subtitle_file or self.font_folder))
         needs_intro = selected_id == 4
         self.subtitle_label.setEnabled(needs_subtitles)
         self.subtitle_button.setEnabled(needs_subtitles)
@@ -640,6 +658,19 @@ class ComponentSelectionDialog(QDialog):
         if not self._validate_inputs(show_error=True):
             return
 
+        # Zewnętrzne napisy bez folderu czcionek: FFmpeg nie widzi wtedy czcionek z załączników MKV.
+        if self.button_group.checkedId() == 1 and self.subtitle_file and not self.font_folder:
+            reply = QMessageBox.warning(
+                self, "Brak folderu czcionek",
+                "Wybrano zewnętrzne napisy bez folderu czcionek.\n\n"
+                "FFmpeg nie użyje wtedy czcionek z pliku MKV - tylko tych zainstalowanych w systemie. "
+                "Brakujące czcionki zostaną zastąpione zastępczymi (zwykle niezauważalnie).\n\n"
+                "Kontynuować mimo to?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No)
+            if reply != QMessageBox.StandardButton.Yes:
+                return
+
         # Sprawdź, czy użytkownik chce użyć niestandardowych ustawień.
         output_path = None
         if self.custom_output_checkbox.isChecked() or self.frixy_mode:
@@ -811,7 +842,9 @@ class ComponentSelectionDialog(QDialog):
         ok_button = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
         is_valid = False
         selected_id = self.button_group.checkedId()
-        if selected_id in [1, 2, 3]:
+        if selected_id == 1:
+            is_valid = bool(self.mkv_file)
+        elif selected_id in [2, 3]:
             is_valid = all([self.mkv_file, self.subtitle_file, self.font_folder])
         elif selected_id == 4:
             is_valid = all([self.mkv_file, self.intro_file])
@@ -859,6 +892,14 @@ class ComponentSelectionDialog(QDialog):
             self.update_file_labels()
             self._validate_inputs()
             self.update_ui_state()
+
+    def clear_external_subtitles(self):
+        self.subtitle_file = None
+        self.font_folder = None
+        self.subtitle_label.setText("Plik z napisami: Nie wybrano")
+        self.font_label.setText("Folder z czcionkami: Nie wybrano")
+        self._validate_inputs()
+        self.update_ui_state()
 
     def select_font_folder(self):
         last_dir = self._get_last_used_directory()

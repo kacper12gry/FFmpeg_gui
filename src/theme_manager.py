@@ -9,7 +9,7 @@ def get_dark_theme_qss():
     QWidget {
         background-color: #2b2b2b;
         color: #e0e0e0;
-        font-family: "Segoe UI", "Arial", sans-serif;
+        font-family: "Noto Sans", "Segoe UI", "Arial", sans-serif;
         font-size: 10pt;
         border: none;
     }
@@ -31,6 +31,21 @@ def get_dark_theme_qss():
         background-color: #555555;
         color: #888888
     }
+    QPushButton[variant="secondary"] {
+        background-color: #3a3a3a;
+        color: #e0e0e0;
+        border: 1px solid #555555;
+        font-weight: normal;
+    }
+    QPushButton[variant="secondary"]:hover { background-color: #474747; }
+    QPushButton[variant="danger"] {
+        background-color: transparent;
+        color: #ff7b72;
+        border: 1px solid #6e3a36;
+        font-weight: normal;
+    }
+    QPushButton[variant="danger"]:hover { background-color: #3d2422; }
+    QLabel[muted="true"] { color: #9a9a9a; }
 
     /* Specjalny styl dla mniejszych przycisków */
     QPushButton#smallButton {
@@ -170,7 +185,8 @@ def get_dark_theme_qss():
         border-radius: 5px;
         padding: 5px;
         outline: 0px;
-        font-family: "Consolas", "Monaco", "monospace";
+        font-family: "Inconsolata", "Consolas", monospace;
+        font-size: 11pt; /* Inconsolata ma niskie małe litery - 11 pt odpowiada ok. 10 pt innych czcionek */
         color: #e0e0e0; /* Dodano kolor tekstu dla stanu normalnego */
     }
     /* NOWE: Style dla wyłączonych list i pól tekstowych */
@@ -437,7 +453,7 @@ def get_professional_light_theme_qss():
     QWidget {
         background-color: #F5F5F5;
         color: #111111;
-        font-family: "Segoe UI", "Arial", sans-serif;
+        font-family: "Noto Sans", "Segoe UI", "Arial", sans-serif;
         font-size: 10pt;
         border: none;
     }
@@ -460,6 +476,21 @@ def get_professional_light_theme_qss():
         color: #A0A0A0;
         border: 1px solid #CCCCCC;
     }
+    QPushButton[variant="secondary"] {
+        background-color: #FFFFFF;
+        color: #111111;
+        border: 1px solid #C0C0C0;
+        font-weight: normal;
+    }
+    QPushButton[variant="secondary"]:hover { background-color: #EAEAEA; }
+    QPushButton[variant="danger"] {
+        background-color: #FFFFFF;
+        color: #B42318;
+        border: 1px solid #E8B4AE;
+        font-weight: normal;
+    }
+    QPushButton[variant="danger"]:hover { background-color: #FDECEA; }
+    QLabel[muted="true"] { color: #6b6b6b; }
     /* Specjalny styl dla mniejszych przycisków */
     QPushButton#smallButton {
         padding-top: 0px;
@@ -476,6 +507,10 @@ def get_professional_light_theme_qss():
     }
 
     /* --- Pola wejściowe --- */
+    QTextEdit, QListWidget {
+        font-family: "Inconsolata", "Consolas", monospace;
+        font-size: 11pt; /* Inconsolata ma niskie małe litery - 11 pt odpowiada ok. 10 pt innych czcionek */
+    }
     QLineEdit, QSpinBox, QTextEdit, QListWidget {
         background-color: #FFFFFF;
         color: #111111;

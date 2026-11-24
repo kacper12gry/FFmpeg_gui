@@ -55,7 +55,12 @@ class TaskSummaryDialog(QDialog):
         selected_script = data.get('selected_script')
         html += f"<li><b>Główny skrypt:</b> {script_map.get(selected_script, '<i>Nieznany</i>')}</li>"
 
-        if selected_script in [1, 2, 3]:
+        if selected_script == 1:
+            sub, font = data.get('subtitle_file'), data.get('font_folder')
+            html += f"<li><b>Napisy:</b> {sub.name if sub else 'osadzone w MKV'}</li>"
+            html += f"<li><b>Czcionki:</b> {font.name if font else ('z MKV' if not sub else '<i>tylko systemowe</i>')}</li>"
+
+        if selected_script in [2, 3]:
             html += f"<li><b>Plik napisów:</b> {data.get('subtitle_file').name if data.get('subtitle_file') else '<i>Brak</i>'}</li>"
             html += f"<li><b>Folder czcionek:</b> {data.get('font_folder').name if data.get('font_folder') else '<i>Brak</i>'}</li>"
 

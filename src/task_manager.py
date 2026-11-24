@@ -91,6 +91,8 @@ class Task:
             if self.selected_script == 1:
                 encoder = "CPU" if self.selected_ffmpeg_script == 1 else f"GPU ({self.gpu_bitrate} Mbps)"
                 details.append(f"Typ: Hardsub | Enkoder: {encoder}")
+                if self.subtitle_file:
+                    details.append(f"Napisy: {path_repr_simple(self.subtitle_file)} | Czcionki: {path_repr_simple(self.font_folder)}")
             elif self.selected_script == 2:
                 encoder = "CPU" if self.selected_ffmpeg_script == 1 else f"GPU ({self.gpu_bitrate} Mbps)"
                 details.append(f"Typ: Remux + Hardsub | Enkoder: {encoder}")
@@ -130,7 +132,7 @@ class TaskManager:
                 else:
                     item.setText("► " + item.text())
 
-            if "Przetwarzanie" in task.status or "Przygotowywanie" in task.status or "Krok" in task.status:
+            if (i == 0 and is_running) or "Przetwarzanie" in task.status or "Przygotowywanie" in task.status or "Krok" in task.status:
                 item.setForeground(QColor("#E67E22"))
             elif "Błąd" in task.status:
                 item.setForeground(QColor("#F44336"))

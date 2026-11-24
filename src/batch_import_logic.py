@@ -78,7 +78,15 @@ class BatchImportLogic:
                 except OSError as e:
                     warnings.append(f"Nieprawidłowa ścieżka do pliku MKV: {e}")
 
-            if script_type in [1, 2, 3]:
+            if script_type == 1:   # napisy/czcionki opcjonalne - sprawdzamy tylko te podane
+                if subtitle_path and not subtitle_path.is_file():
+                    warnings.append(f"Plik napisów nie istnieje: {sub_path_str}")
+                if font_folder and not font_folder.is_dir():
+                    warnings.append(f"Folder czcionek nie istnieje: {font_path_str}")
+                if subtitle_path and not font_folder:
+                    warnings.append("Zewnętrzne napisy bez folderu czcionek - FFmpeg nie użyje czcionek z MKV.")
+
+            if script_type in [2, 3]:
                 if not subtitle_path:
                     warnings.append("Brak ścieżki do napisów.")
                 else:

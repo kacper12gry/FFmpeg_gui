@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QPushButton, QTextEdit, QVBoxLayout, QHBoxLayout,
     QWidget, QListWidget, QAbstractItemView, QMessageBox, QDialog,
     QGroupBox, QSplitter, QStyleFactory, QLabel, QSystemTrayIcon, QCheckBox,
-    QSizePolicy
+    QSizePolicy, QProgressBar
 )
-from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl, QSignalBlocker
-from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices
+from PyQt6.QtCore import QProcess, Qt, QSettings, QTimer, QUrl, QSignalBlocker, QSize
+from PyQt6.QtWidgets import QMenu
+from PyQt6.QtGui import QIcon, QAction, QActionGroup, QGuiApplication, QDesktopServices, QPalette, QColor, QFontDatabase
 from packaging.version import parse
 
 # Importy lokalnych modułów
@@ -27,8 +28,19 @@ from discord_rpc_manager import DiscordRPCManager
 from plugin_manager import PluginManager
 from settings_window import SettingsWindow
 from task_summary_dialog import TaskSummaryDialog
+from command_preview_dialog import CommandPreviewDialog
 
 from _version import __version__, latest_release_tag
+
+def load_bundled_fonts():
+    """Rejestruje czcionki z fonts_gui/: Noto Sans (interfejs) i Inconsolata (log, kolejka).
+    W motywach Ciemny/Jasny są używane zawsze, więc program wygląda tak samo na każdym systemie."""
+    fonts_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fonts_gui")
+    if os.path.isdir(fonts_dir):
+        for name in sorted(os.listdir(fonts_dir)):
+            if name.lower().endswith((".ttf", ".otf")):
+                QFontDatabase.addApplicationFont(os.path.join(fonts_dir, name))
+
 
 class MainWindow(QMainWindow):
     def __init__(self, original_style_name, original_stylesheet):
@@ -149,6 +161,8 @@ class MainWindow(QMainWindow):
         self.output_window.setReadOnly(True)
         self.task_list = QListWidget(self)
         self.task_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
+        self.task_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.task_list.customContextMenuRequested.connect(self._show_task_context_menu)
         self.cancel_button = QPushButton("Anuluj wybrane zadanie", self)
         self.eta_label = QLabel("Czas do końca: -")
         self.eta_label.setVisible(False)
@@ -173,6 +187,7 @@ class MainWindow(QMainWindow):
 
         # Grupy widżetów
         task_group = QGroupBox("Kolejka Zadań")
+        self.task_group = task_group
         task_layout = QVBoxLayout(task_group)
         task_layout.addWidget(self.task_list)
         
@@ -211,121 +226,100 @@ class MainWindow(QMainWindow):
         log_layout.addWidget(self.output_window)
 
         if self.current_layout_type == "dashboard":
-            # --- UKŁAD ROZBUDOWANY (DASHBOARD) ---
-            h_layout = QHBoxLayout()
-            
-            # Lewy pasek boczny
-            sidebar = QVBoxLayout()
-            sidebar.setSpacing(10)
-            
-            # 1. Główne Akcje
-            actions_group = QGroupBox("Główne Akcje")
-            actions_layout = QVBoxLayout(actions_group)
-            self.button.setText("➕ Dodaj Zadania") 
-            self.button.setMinimumHeight(45)
-            self.button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            self.button.setStyleSheet("font-weight: bold; font-size: 13px;")
-            
-            self.refresh_button.setText("🔄 Restart Programu")
-            self.refresh_button.setMinimumHeight(45)
-            self.refresh_button.setMaximumWidth(16777215) # Resetowanie ograniczenia (QWIDGETSIZE_MAX)
-            self.refresh_button.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
-            
-            actions_layout.addWidget(self.button)
-            actions_layout.addWidget(self.refresh_button)
-            sidebar.addWidget(actions_group)
-            
-            # 2. Sterowanie Kolejką
-            queue_ctrl_group = QGroupBox("Sterowanie Kolejką")
-            queue_grid = QVBoxLayout(queue_ctrl_group)
-            
-            # Przyciski przesuwania
-            move_layout = QHBoxLayout()
-            btn_up = QPushButton(" Góra")
-            btn_up.setIcon(QIcon("icon/arrow_up.svg"))
+            # --- UKŁAD PANELU STEROWANIA ---
+            # Góra: karta "Teraz przetwarzane" na całą szerokość (+ główna akcja).
+            # Dół: kolejka (z paskiem przycisków) | log. Opcje są w menu "Opcje".
+            # QGroupBox jak "Kolejka" i "Log" - natywna ramka w każdym stylu systemowym (też Breeze)
+            card = QGroupBox("Teraz przetwarzane")
+            card_layout = QVBoxLayout(card)
+            card_layout.setContentsMargins(14, 6, 14, 10)
+            card_layout.setSpacing(6)
+
+            top_row = QHBoxLayout()
+            self.queue_active_label = QLabel()
+            self.active_file_label = QLabel()
+            self.active_file_label.setStyleSheet("font-weight: bold; font-size: 12pt;")
+            # Długa nazwa pliku nie rozpycha okna (pełna ścieżka w podpowiedzi)
+            self.active_file_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+            top_row.addWidget(self.queue_active_label)
+            top_row.addSpacing(8)
+            top_row.addWidget(self.active_file_label, 1)
+
+            self.refresh_button.setText("")   # ikona z icon/restart*.svg (wariant wg motywu)
+            self.refresh_button.setIconSize(QSize(20, 20))
+            self._restart_icon_button = self.refresh_button
+            self.refresh_button.setToolTip("Restart programu")
+            self.refresh_button.setFixedWidth(44)
+            self.refresh_button.setProperty("variant", "secondary")
+            self.button.setText("Dodaj zadania")   # ikona z icon/plus*.svg (wariant wg motywu)
+            self.button.setIconSize(QSize(16, 16))
+            self._add_icon_button = self.button
+            self.button.setMinimumWidth(160)
+            self.button.setDefault(True)   # natywne wyróżnienie głównej akcji (Breeze/Fusion/Windows)
+            top_row.addWidget(self.refresh_button)
+            top_row.addWidget(self.button)
+            card_layout.addLayout(top_row)
+
+            self.active_step_label = QLabel()
+            self._make_muted(self.active_step_label)
+            card_layout.addWidget(self.active_step_label)
+
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setRange(0, 100)
+            self.progress_bar.setFormat("%p%")
+            self.progress_bar.setFixedHeight(22)
+            card_layout.addWidget(self.progress_bar)
+
+            stats_row = QHBoxLayout()
+            self.speed_label = QLabel()
+            self._make_muted(self.speed_label)
+            stats_row.addWidget(self.speed_label)
+            stats_row.addStretch()
+            stats_row.addWidget(self.eta_label)
+            card_layout.addLayout(stats_row)
+
+            main_layout.addWidget(card)
+
+            # Pasek przycisków nad listą zadań
+            toolbar = QHBoxLayout()
+            btn_up = QPushButton("▲ Wyżej")
+            btn_up.setProperty("variant", "secondary")
             btn_up.clicked.connect(self.move_task_up)
-            
-            btn_down = QPushButton(" Dół")
-            btn_down.setIcon(QIcon("icon/arrow_down.svg"))
+            btn_down = QPushButton("▼ Niżej")
+            btn_down.setProperty("variant", "secondary")
             btn_down.clicked.connect(self.move_task_down)
-            
-            move_layout.addWidget(btn_up)
-            move_layout.addWidget(btn_down)
-            
-            # Przyciski usuwania
-            btn_remove = QPushButton("❌ Usuń zaznaczone")
+            btn_remove = QPushButton("Usuń")
+            btn_remove.setToolTip("Usuń zaznaczone zadanie (aktywne zostanie przerwane)")
+            btn_remove.setProperty("variant", "danger")
             btn_remove.clicked.connect(self.show_cancel_confirmation)
-            
-            btn_clear = QPushButton("🗑️ Wyczyść wszystko")
+            btn_clear = QPushButton("Wyczyść")
+            btn_clear.setToolTip("Usuń wszystkie oczekujące zadania")
+            btn_clear.setProperty("variant", "danger")
             btn_clear.clicked.connect(self.clear_all_tasks)
-            
-            queue_grid.addLayout(move_layout)
-            queue_grid.addWidget(btn_remove)
-            queue_grid.addWidget(btn_clear)
-            sidebar.addWidget(queue_ctrl_group)
+            toolbar.addWidget(btn_up)
+            toolbar.addWidget(btn_down)
+            toolbar.addStretch()
+            toolbar.addWidget(btn_remove)
+            toolbar.addWidget(btn_clear)
+            task_group.layout().insertLayout(0, toolbar)
+            self._danger_buttons = [btn_remove, btn_clear]
+            self._refresh_native_accents()
 
-            # 3. Status Aktywny
-            status_group = QGroupBox("Teraz Przetwarzane")
-            status_layout = QVBoxLayout(status_group)
-            
-            self.active_file_label = QLabel("- brak -")
-            self.active_file_label.setWordWrap(True)
-            self.active_file_label.setStyleSheet("font-weight: bold; color: #4aa6ff;")
-            
-            self.queue_active_label = QLabel("Status: Bezczynny")
-            self.queue_active_label.setStyleSheet("color: gray;")
-            
-            status_layout.addWidget(QLabel("Plik:"))
-            status_layout.addWidget(self.active_file_label)
-            status_layout.addSpacing(5)
-            status_layout.addWidget(self.queue_active_label)
-            status_layout.addWidget(self.eta_label)
-            self.eta_label.setVisible(True)
-            
-            sidebar.addWidget(status_group)
-            
-            # 4. Opcje
-            settings_group = QGroupBox("Opcje")
-            settings_layout = QVBoxLayout(settings_group)
-            
-            # Checkbox RPC
-            self.rpc_dashboard_check = QCheckBox("Discord RPC")
-            rpc_enabled = self.settings.value("discord_rpc_enabled", False, type=bool)
-            self.rpc_dashboard_check.setChecked(rpc_enabled)
-            self.rpc_dashboard_check.toggled.connect(self.toggle_discord_rpc)
-            settings_layout.addWidget(self.rpc_dashboard_check)
-            
-            # Checkbox Szczegółowy widok
-            self.detailed_dashboard_check = QCheckBox("Szczegółowy widok")
-            detailed_enabled = self.settings.value("detailed_view", False, type=bool)
-            self.detailed_dashboard_check.setChecked(detailed_enabled)
-            self.detailed_dashboard_check.toggled.connect(self.toggle_detailed_view)
-            settings_layout.addWidget(self.detailed_dashboard_check)
-            
-            sidebar.addWidget(settings_group)
-            
-            sidebar.addStretch()
-            
-            sidebar_widget = QWidget()
-            sidebar_widget.setLayout(sidebar)
-            sidebar_widget.setFixedWidth(260)
-            
-            h_layout.addWidget(sidebar_widget, 0)
-            
-            # Splitter dla logów i zadań
             self.splitter = QSplitter(Qt.Orientation.Horizontal)
-            self.splitter.addWidget(log_group)
             self.splitter.addWidget(task_group)
-            self.splitter.setStretchFactor(0, 1)
-            self.splitter.setStretchFactor(1, 1)
-            
-            h_layout.addWidget(self.splitter, 1)
-            main_layout.addLayout(h_layout)
+            self.splitter.addWidget(log_group)
+            self.splitter.setStretchFactor(0, 3)
+            self.splitter.setStretchFactor(1, 2)
+            saved_split = self.settings.value("dashboard_splitter_v2")
+            if saved_split is not None:
+                self.splitter.restoreState(saved_split)
+            self.splitter.splitterMoved.connect(
+                lambda *_: self.settings.setValue("dashboard_splitter_v2", self.splitter.saveState()))
+            main_layout.addWidget(self.splitter, 1)
 
-            # Timer do aktualizacji GUI
             self.dashboard_timer = QTimer(self)
             self.dashboard_timer.timeout.connect(self._update_dashboard_info)
-            self.dashboard_timer.start(1000)
+            self.dashboard_timer.start(500)
 
         else:
             # --- UKŁAD KLASYCZNY ---
@@ -341,30 +335,107 @@ class MainWindow(QMainWindow):
             self.splitter.setStretchFactor(1, 2)
             main_layout.addWidget(self.splitter)
 
-    def _update_dashboard_info(self):
-        """Aktualizuje informacje w panelu bocznym."""
-        if not hasattr(self, 'queue_active_label'): return
-        
-        is_running = self.process_manager.is_running()
-        
-        # Status
-        status_text = "PRZETWARZANIE" if is_running else "OCZEKIWANIE"
-        color = "#cf222e" if is_running else "gray" # Czerwony jeśli działa
-        if not is_running and self.task_list.count() == 0:
-             status_text = "BEZCZYNNY"
-             color = "#2da44e" # Zielony jeśli pusto
+    def _make_muted(self, label):
+        """Tekst pomocniczy: w motywach programu kolor z QSS, w systemowym z palety systemu."""
+        label.setProperty("muted", True)
+        self.__dict__.setdefault("_muted_labels", []).append(label)
 
-        self.queue_active_label.setText(f"Status: {status_text}")
+    def _refresh_native_accents(self):
+        """Czerwony tekst przycisków Usuń/Wyczyść dopasowany do jasnej/ciemnej palety systemu.
+        W motywach Ciemny/Jasny i tak nadpisuje go arkusz stylów."""
+        # Arkusz stylów (Ciemny/Jasny) ustawia kolor przez QLabel[muted]; bez niego bierzemy
+        # przygaszony kolor z palety systemu (PlaceholderText).
+        has_qss = bool(QApplication.instance().styleSheet())
+        role = QPalette.ColorRole.WindowText if has_qss else QPalette.ColorRole.PlaceholderText
+        for label in getattr(self, "_muted_labels", []):
+            label.setForegroundRole(role)
+
+        # Ikony SVG z folderu icon/: "nazwa.svg" = biała (ciemne tło), "nazwa_dark.svg" = ciemna (jasne tło)
+        theme = getattr(self, "_current_theme", "system")
+        palette_is_dark = QApplication.palette().color(QPalette.ColorRole.Button).lightness() < 128
+        restart_btn = getattr(self, "_restart_icon_button", None)
+        if restart_btn is not None:
+            light_glyph = theme == "dark" or (theme not in ("dark", "pro_light") and palette_is_dark)
+            restart_btn.setIcon(QIcon("icon/restart.svg" if light_glyph else "icon/restart_dark.svg"))
+        add_btn = getattr(self, "_add_icon_button", None)
+        if add_btn is not None:
+            # Motywy programu: kolorowy przycisk z białym tekstem -> biały plus
+            light_glyph = theme in ("dark", "pro_light") or palette_is_dark
+            add_btn.setIcon(QIcon("icon/plus.svg" if light_glyph else "icon/plus_dark.svg"))
+
+        buttons = getattr(self, "_danger_buttons", [])
+        if not buttons:
+            return
+        is_dark = QApplication.palette().color(QPalette.ColorRole.Window).lightness() < 128
+        color = QColor("#ff7b72" if is_dark else "#B42318")
+        for btn in buttons:
+            pal = btn.palette()
+            pal.setColor(QPalette.ColorRole.ButtonText, color)
+            btn.setPalette(pal)
+
+    def _update_dashboard_info(self):
+        """Aktualizuje panel boczny i licznik kolejki (układ panelu sterowania)."""
+        if not hasattr(self, 'queue_active_label') or not hasattr(self, 'process_manager'): return
+
+        pm = self.process_manager
+        count = len(self.task_manager.tasks)
+        self.task_group.setTitle(f"Kolejka zadań ({count})" if count else "Kolejka zadań")
+
+        is_running = pm.is_running()
+        task = self.task_manager.get_task(0)
+
+        if is_running and task:
+            state, color = "● Przetwarzanie", "#E67E22"
+        elif count:
+            state, color = "● Oczekiwanie", "gray"
+        else:
+            state, color = "● Bezczynny", "#2da44e"
+        self.queue_active_label.setText(state)
         self.queue_active_label.setStyleSheet(f"color: {color}; font-weight: bold;")
 
-        # Aktywny plik
-        if self.task_list.count() > 0:
-            # Zakładamy, że pierwsze zadanie jest tym aktywnym lub następnym
-            item = self.task_list.item(0)
-            task_name = item.text().split(" | ")[0] # Uproszczone pobieranie nazwy
-            self.active_file_label.setText(task_name)
+        if task and task.mkv_file:
+            self.active_file_label.setText(task.mkv_file.name)
+            self.active_file_label.setToolTip(str(task.mkv_file))
         else:
-            self.active_file_label.setText("- brak zadań -")
+            self.active_file_label.setText("Brak zadań - kliknij „Dodaj zadania”, aby zacząć")
+            self.active_file_label.setToolTip("")
+
+        self.active_step_label.setText(task.status if (task and is_running) else "")
+        self.active_step_label.setVisible(bool(task and is_running))
+
+        # Postęp: procent z FFmpeg; mkvmerge/ffprobe nie podają procentu -> pasek "w toku"
+        self.progress_bar.setVisible(is_running)
+        if is_running:
+            if pm.progress_percentage is not None and pm.progress_percentage >= 0:
+                if self.progress_bar.maximum() == 0:
+                    self.progress_bar.setRange(0, 100)
+                self.progress_bar.setValue(min(100, int(pm.progress_percentage)))
+            else:
+                self.progress_bar.setRange(0, 0)
+
+        speed = pm.current_ffmpeg_speed
+        self.speed_label.setText(f"Prędkość: {speed}" if (is_running and speed) else "")
+        self.progress_bar.setVisible(is_running)
+        self.speed_label.setVisible(bool(is_running and speed))
+        if not is_running:
+            self.eta_label.setVisible(False)
+
+    def _show_task_context_menu(self, pos):
+        row = self.task_list.indexAt(pos).row()
+        if row < 0:
+            return
+        self.task_list.setCurrentRow(row)
+        menu = QMenu(self)
+        preview_action = menu.addAction("Podgląd komendy...")
+        if menu.exec(self.task_list.viewport().mapToGlobal(pos)) == preview_action:
+            self.show_command_preview(row)
+
+    def show_command_preview(self, row):
+        task = self.task_manager.get_task(row)
+        if not task:
+            return
+        steps = self.process_manager.build_command_preview(task)
+        CommandPreviewDialog(steps, self).exec()
 
     def move_task_up(self):
         row = self.task_list.currentRow()
@@ -556,6 +627,7 @@ class MainWindow(QMainWindow):
 
     def apply_theme(self, theme_name, save=True):
         app = QApplication.instance()
+        self._current_theme = theme_name
 
         # Ustaw styl i arkusz stylów
         if theme_name == "system":
@@ -577,6 +649,8 @@ class MainWindow(QMainWindow):
             QApplication.setStyle(QStyleFactory.create("Fusion"))
             app.setStyleSheet(get_light_theme_qss())
             self._update_windows_titlebar(dark_mode=False)
+
+        self._refresh_native_accents()
 
         # Zapisz ustawienie
         if save:
@@ -741,6 +815,7 @@ if __name__ == "__main__":
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
     
     app = QApplication(sys.argv)
+    load_bundled_fonts()
     app.setApplicationName("Automatyzer")
     app.setApplicationDisplayName("Automatyzer")
     app.setApplicationVersion(__version__)

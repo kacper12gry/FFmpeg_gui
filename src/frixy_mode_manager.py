@@ -41,7 +41,7 @@ class FrixyModeManager:
     def _fetch_from_network(self, url):
         try:
             context = ssl._create_unverified_context()
-            with urllib.request.urlopen(url, context=context) as response:
+            with urllib.request.urlopen(url, context=context, timeout=5) as response:
                 data = json.loads(response.read().decode())
                 if "years" in data:
                     self._data = data["years"]
